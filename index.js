@@ -98,7 +98,7 @@ client.on('guildMemberAdd', async member => {
     const embed = new EmbedBuilder()
         .setColor(0x00AEFF)
         .setTitle(`🎉 Welcome to ${member.guild.name}!`)
-        .setDescription(`Hey ${member}, we're glad you're here!\n\nChoose your profession with \`/selectprofession\` and become part of the community.`)
+        .setDescription(`Hey ${member.user.username}, we're glad you're here!\n\nChoose your profession with \`/selectprofession\` and become part of the community.`)
         .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
         .setFooter({ text: `Member #${member.guild.memberCount}` })
         .setTimestamp();
