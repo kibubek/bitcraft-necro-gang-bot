@@ -20,7 +20,7 @@ const client = new Client({
 const professions = [
     "Carpentry", "Farming", "Fishing", "Foraging", "Forestry",
     "Hunting", "Leatherworking", "Masonry", "Mining",
-    "Scholar", "Smithing", "Tailoring"
+    "Scholar", "Smithing", "Tailoring", "Cooking"
 ];
 
 const levels = ["10", "20", "30", "40", "50", "60", "70", "80", "90", "100"];
@@ -29,6 +29,7 @@ client.once('ready', async () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
 
     const commands = [
+
         new SlashCommandBuilder()
             .setName('testwelcome')
             .setDescription('Test the welcome message embed'),
@@ -51,6 +52,7 @@ client.once('ready', async () => {
         console.log(`✅ Registered slash commands in ${guild.name}`);
     }
 });
+
 
 // Profession selection
 client.on(Events.InteractionCreate, async interaction => {
