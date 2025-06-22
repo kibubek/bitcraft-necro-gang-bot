@@ -29,6 +29,14 @@ client.once('ready', async () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
 
     const commands = [
+        new SlashCommandBuilder()
+            .setName('profession')
+            .setDescription('See the top 5 users in a specific profession')
+            .addStringOption(option =>
+                option.setName('profession')
+                    .setDescription('The profession to check')
+                    .setRequired(true)
+                    .addChoices(...professions.map(p => ({ name: p, value: p })))),
 
         new SlashCommandBuilder()
             .setName('testwelcome')
@@ -51,6 +59,44 @@ client.once('ready', async () => {
         await guild.commands.set(commands);
         console.log(`✅ Registered slash commands in ${guild.name}`);
     }
+});
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== 'profession') return;
+
+    const profession = interaction.options.getString('profession');
+    const rolePattern = new RegExp(`^${profession} (\\d{1,3})$`);
+    const members = await interaction.guild.members.fetch();
+
+    const scoredMembers = [];
+
+    for (const member of members.values()) {
+        const role = member.roles.cache.find(r => rolePattern.test(r.name));
+        if (role) {
+            const match = role.name.match(rolePattern);
+            const level = parseInt(match[1]);
+            scoredMembers.push({ user: member.user, level });
+        }
+    }
+
+    if (scoredMembers.length === 0) {
+        await interaction.reply({ content: `❌ No users found with the **${profession}** profession.`, ephemeral: true });
+        return;
+    }
+
+    scoredMembers.sort((a, b) => b.level - a.level);
+    const top5 = scoredMembers.slice(0, 5);
+
+    const description = top5.map((entry, index) => {
+        return `**#${index + 1}** – <@${entry.user.id}>: Level ${entry.level}`;
+    }).join('\n');
+
+    const embed = new EmbedBuilder()
+        .setTitle(`🏆 Top ${profession} Members`)
+        .setDescription(description)
+        .setColor(0xFFD700);
+
+    await interaction.reply({ embeds: [embed] });
 });
 
 // Profession selection
