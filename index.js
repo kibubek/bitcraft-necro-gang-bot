@@ -118,8 +118,26 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 async function updateAssignmentEmbed(guild) {
-    const channel = await guild.channels.fetch(assignmentChannelId);
-    const message = await channel.messages.fetch(assignmentMessageId);
+    if (!assignmentData.channelId || !assignmentData.messageId) {
+        console.warn('⚠️ Assignment embed setup is missing. Skipping update.');
+        return;
+    }
+
+    let channel;
+    try {
+        channel = await guild.channels.fetch(assignmentData.channelId);
+    } catch (err) {
+        console.warn(`⚠️ Could not fetch assignment channel (${assignmentData.channelId}):`, err.message);
+        return;
+    }
+
+    let message;
+    try {
+        message = await channel.messages.fetch(assignmentData.messageId);
+    } catch (err) {
+        console.warn(`⚠️ Could not fetch assignment message (${assignmentData.messageId}):`, err.message);
+        return;
+    }
 
     const professionSections = professions.map(prof => {
         const entries = Array.from(assignedProfessionByUser.entries())
@@ -144,6 +162,7 @@ async function updateAssignmentEmbed(guild) {
 
     await message.edit({ embeds: [embed] });
 }
+
 const fs = require('fs');
 const path = require('path');
 const assignmentDataPath = path.join(__dirname, 'assignments.json');
