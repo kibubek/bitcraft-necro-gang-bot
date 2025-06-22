@@ -53,7 +53,6 @@ client.once('ready', async () => {
     }
 });
 
-
 // Profession selection
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isChatInputCommand()) return;
@@ -171,6 +170,38 @@ client.on(Events.InteractionCreate, async interaction => {
             embeds: [],
             components: []
         });
+    }
+});
+
+
+client.on('threadCreate', async thread => {
+    // Only target public forum threads
+    if (!thread.parent || thread.parent.type !== 15) return; // 15 = GuildForum
+    if (thread.archived) return;
+
+    try {
+        const questTag = thread.appliedTags?.some(tagId => {
+            const tag = thread.parent.availableTags.find(t => t.id === tagId);
+            return tag?.name.toLowerCase() === 'quest';
+        });
+
+        if (!questTag) return;
+
+        console.log(`📝 Detected 'Quest' thread: "${thread.name}". Will auto-archive in 4 hours.`);
+
+        setTimeout(async () => {
+            try {
+                const freshThread = await thread.fetch();
+                if (!freshThread.archived) {
+                    await freshThread.setArchived(true, 'Auto-archived Quest thread after 4 hours');
+                    console.log(`✅ Archived thread: ${freshThread.name}`);
+                }
+            } catch (err) {
+                console.error(`❌ Failed to archive thread: ${thread.name}`, err.message);
+            }
+        }, 4 * 60 * 60 * 1000); // 4 hours in milliseconds
+    } catch (err) {
+        console.error('Error processing threadCreate:', err.message);
     }
 });
 
