@@ -238,7 +238,23 @@ client.on(Events.InteractionCreate, async interaction => {
     await updateAssignmentEmbed(interaction.guild);
     await interaction.reply({ content: `✅ You have been assigned to **${profession}**.`, ephemeral: true });
 });
+client.on(Events.InteractionCreate, async interaction => {
+    // Already handled interactions above this...
 
+    // Only update embed if it's in a guild, and the board exists
+    if (
+        interaction.guild &&
+        assignmentData.channelId &&
+        assignmentData.messageId &&
+        assignedProfessionByUser.size > 0
+    ) {
+        try {
+            await updateAssignmentEmbed(interaction.guild);
+        } catch (err) {
+            console.warn('⚠️ Failed to update assignment embed after interaction:', err.message);
+        }
+    }
+});
 // Profession selection
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isChatInputCommand()) return;
