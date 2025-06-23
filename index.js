@@ -43,14 +43,14 @@ function saveAssignments() {
 async function updateAssignmentEmbed(guild) {
     if (!assignmentData.channelId || !assignmentData.messageId) return;
     loadAssignments();
-    const assignedProfessionByUser = new Map(Object.entries(assignmentData.assigned));
+    const assigned = assignmentData.assigned;
     try {
         const channel = await guild.channels.fetch(assignmentData.channelId);
         const message = await channel.messages.fetch(assignmentData.messageId);
 
         const sections = professions.map(prof => {
-            const entries = Array.from(assignedProfessionByUser.entries())
-                .filter(([, p]) => p === prof)
+            const entries = Object.entries(assigned)
+                .filter(([, list]) => Array.isArray(list) && list.includes(prof))
                 .map(([id]) => {
                     const member = guild.members.cache.get(id);
                     if (!member) return null;
@@ -77,6 +77,9 @@ client.once('ready', async () => {
     const commands = [
         new SlashCommandBuilder().setName('setupassignments').setDescription('Initialize the assignment board'),
         new SlashCommandBuilder().setName('assignmyselfto').setDescription('Assign yourself to a profession')
+            .addStringOption(opt => opt.setName('profession').setDescription('Profession').setRequired(true)
+                .addChoices(...professions.map(p => ({ name: p, value: p })))),
+        new SlashCommandBuilder().setName('unassignmyselffrom').setDescription('Unassign yourself from a profession')
             .addStringOption(opt => opt.setName('profession').setDescription('Profession').setRequired(true)
                 .addChoices(...professions.map(p => ({ name: p, value: p })))),
         new SlashCommandBuilder().setName('settimer').setDescription('Set a timer that pings you after given minutes')
@@ -115,11 +118,28 @@ client.on(Events.InteractionCreate, async interaction => {
             loadAssignments();
             const role = member.roles.cache.find(r => r.name.startsWith(`${profession} `));
             if (!role) return void interaction.reply({ content: `❌ You don't have a role for **${profession}**.`, ephemeral: true });
-            assignmentData.assigned[user.id] = profession;
+            if (!Array.isArray(assignmentData.assigned[user.id])) assignmentData.assigned[user.id] = [];
+            if (!assignmentData.assigned[user.id].includes(profession)) {
+                assignmentData.assigned[user.id].push(profession);
+            }
             saveAssignments();
             await updateAssignmentEmbed(guild);
             console.log(`[ASSIGN] ${user.tag} assigned to ${profession}`);
             return void interaction.reply({ content: `✅ Assigned to **${profession}**.`, ephemeral: true });
+        }
+
+        if (commandName === 'unassignmyselffrom') {
+            loadAssignments();
+            const list = assignmentData.assigned[user.id];
+            if (!Array.isArray(list) || !list.includes(profession)) {
+                return void interaction.reply({ content: `❌ You are not assigned to **${profession}**.`, ephemeral: true });
+            }
+            assignmentData.assigned[user.id] = list.filter(p => p !== profession);
+            if (assignmentData.assigned[user.id].length === 0) delete assignmentData.assigned[user.id];
+            saveAssignments();
+            await updateAssignmentEmbed(guild);
+            console.log(`[UNASSIGN] ${user.tag} unassigned from ${profession}`);
+            return void interaction.reply({ content: `✅ Unassigned from **${profession}**.`, ephemeral: true });
         }
 
         if (commandName === 'settimer') {
@@ -187,7 +207,7 @@ client.on(Events.InteractionCreate, async interaction => {
             await member.roles.add(role);
 
             loadAssignments();
-            if (assignmentData.assigned[member.id] === prof) {
+            if (Array.isArray(assignmentData.assigned[member.id]) && assignmentData.assigned[member.id].includes(prof)) {
                 saveAssignments();
                 await updateAssignmentEmbed(guild);
             }
