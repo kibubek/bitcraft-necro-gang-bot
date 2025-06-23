@@ -1,4 +1,3 @@
-// Optimized full index.js with preserved original functions and compact structure
 require('dotenv').config();
 const {
     Client, GatewayIntentBits, Partials,
@@ -56,14 +55,13 @@ async function updateAssignmentEmbed(guild) {
                 .setColor(0x00AEFF)
                 .setTimestamp()]
         });
-    } catch (e) { console.warn('Embed update error:', e.message); }
+    } catch (e) {
+        console.warn('Embed update error:', e.message);
+    }
 }
+
 client.once('ready', async () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
-    await registerCommands();
-});
-
-async function registerCommands() {
     const commands = [
         new SlashCommandBuilder().setName('setupassignments').setDescription('Initialize the assignment board'),
         new SlashCommandBuilder().setName('assignmyselfto').setDescription('Assign yourself to a profession')
@@ -76,18 +74,17 @@ async function registerCommands() {
         new SlashCommandBuilder().setName('selectprofession').setDescription('Choose a profession'),
         new SlashCommandBuilder().setName('removeprofession').setDescription('Remove your profession role')
             .addStringOption(opt => opt.setName('profession').setDescription('Profession').setRequired(true)
-                .addChoices(...professions.map(p => ({ name: p, value: p }))))
-    ].map(cmd => cmd.toJSON());
-
-    for (const [id, guild] of client.guilds.cache) {
-        try {
-            await client.application.commands.set(commands, guild.id); // per-guild for instant effect
-            console.log(`📌 Registered slash commands in guild: ${guild.name} (${guild.id})`);
-        } catch (err) {
-            console.error(`❌ Failed to register commands for guild ${guild.name}:`, err);
-        }
+                .addChoices(...professions.map(p => ({ name: p, value: p })))),
+        new SlashCommandBuilder().setName('settimer').setDescription('Set a timer that pings you after given minutes')
+            .addIntegerOption(opt => opt.setName('minutes').setDescription('How many minutes').setRequired(true))
+            .addStringOption(opt => opt.setName('note').setDescription('Optional note'))
+    ];
+    for (const [_, guild] of client.guilds.cache) {
+        await guild.commands.set(commands.map(cmd => cmd.toJSON()));
+        await guild.members.fetch();
+        if (assignmentData.messageId && assignmentData.channelId) await updateAssignmentEmbed(guild);
     }
-}
+});
 
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.guild) return;
@@ -114,6 +111,27 @@ client.on(Events.InteractionCreate, async interaction => {
             await updateAssignmentEmbed(guild);
             return void interaction.reply({ content: `✅ Assigned to **${profession}**.`, ephemeral: true });
         }
+
+        if (commandName === 'settimer') {
+            const minutes = interaction.options.getInteger('minutes');
+            let note = interaction.options.getString('note')?.trim();
+            if (!note) note = '⏰ Your timer is up!';
+            const delayMs = minutes * 60 * 1000;
+
+            await interaction.reply({
+                content: `⏳ Timer set for ${minutes} minute(s).\nI’ll remind you with: "${note}"`,
+                ephemeral: true
+            });
+
+            setTimeout(() => {
+                const extraLine = Math.random() < 0.5 ? `\n-# You can set your own timers using /settimer` : '';
+                interaction.channel.send({ content: `🔔 <@${user.id}> ${note}${extraLine}` });
+            }, delayMs);
+
+            return;
+        }
+
+
 
         if (commandName === 'profession') {
             const pattern = new RegExp(`^${profession} (\\d{1,3})$`);
@@ -192,49 +210,17 @@ client.on(Events.InteractionCreate, async interaction => {
                 mentionable: true,
                 reason: `Created for ${prof} ${level}`
             });
+
             await member.roles.add(role);
 
-            // Update embed if the user is assigned to this profession
             if (assignedProfessionByUser.get(member.id) === prof) {
-                saveAssignments(); // Not strictly needed unless you want to sync display
+                saveAssignments();
                 await updateAssignmentEmbed(guild);
             }
 
             return void interaction.update({ content: `✅ Assigned **${roleName}**.`, embeds: [], components: [] });
-
         }
     }
-});
-
-client.on('guildMemberAdd', async member => {
-    const channel = member.guild.channels.cache.get(WELCOME_CHANNEL_ID);
-    if (!channel) return;
-    const embed = new EmbedBuilder()
-        .setColor(0x00AEFF)
-        .setTitle(`🎉 Welcome to ${member.guild.name}!`)
-        .setDescription(`Hey ${member.user.username}, we're glad you're here!\n\nUse \`/selectprofession\` to begin.`)
-        .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
-        .setFooter({ text: `Member #${member.guild.memberCount}` })
-        .setTimestamp();
-    await channel.send({ embeds: [embed] });
-});
-
-client.on('threadCreate', async thread => {
-    if (thread.parent?.type !== 15 || thread.archived) return;
-    const hasQuestTag = thread.appliedTags?.some(tagId => {
-        const tag = thread.parent.availableTags.find(t => t.id === tagId);
-        return tag?.name.toLowerCase() === 'quest';
-    });
-    if (!hasQuestTag) return;
-    console.log(`📝 Quest thread detected: ${thread.name}`);
-    setTimeout(async () => {
-        try {
-            const fresh = await thread.fetch();
-            if (!fresh.archived) await fresh.setArchived(true, 'Auto-archived after 4 hours');
-        } catch (e) {
-            console.warn(`Failed to archive thread: ${thread.name}`, e.message);
-        }
-    }, 4 * 60 * 60 * 1000);
 });
 
 client.login(TOKEN);
