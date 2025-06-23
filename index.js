@@ -20,18 +20,30 @@ const professions = ["Carpentry", "Farming", "Fishing", "Foraging", "Forestry", 
 const levels = ["10", "20", "30", "40", "50", "60", "70", "80", "90", "100"];
 
 let assignmentData = { assigned: {}, messageId: null, channelId: null };
-if (fs.existsSync(ASSIGNMENT_FILE)) {
-    assignmentData = JSON.parse(fs.readFileSync(ASSIGNMENT_FILE, 'utf8'));
+
+function loadAssignments() {
+    if (fs.existsSync(ASSIGNMENT_FILE)) {
+        try {
+            assignmentData = JSON.parse(fs.readFileSync(ASSIGNMENT_FILE, 'utf8'));
+        } catch (e) {
+            console.warn('[LOAD ERROR]', e.message);
+            assignmentData = { assigned: {}, messageId: null, channelId: null };
+        }
+    }
 }
-const assignedProfessionByUser = new Map(Object.entries(assignmentData.assigned));
 
 function saveAssignments() {
-    assignmentData.assigned = Object.fromEntries(assignedProfessionByUser);
-    fs.writeFileSync(ASSIGNMENT_FILE, JSON.stringify(assignmentData, null, 2));
+    try {
+        fs.writeFileSync(ASSIGNMENT_FILE, JSON.stringify(assignmentData, null, 2));
+    } catch (e) {
+        console.error('[SAVE ERROR]', e.message);
+    }
 }
 
 async function updateAssignmentEmbed(guild) {
     if (!assignmentData.channelId || !assignmentData.messageId) return;
+    loadAssignments();
+    const assignedProfessionByUser = new Map(Object.entries(assignmentData.assigned));
     try {
         const channel = await guild.channels.fetch(assignmentData.channelId);
         const message = await channel.messages.fetch(assignmentData.messageId);
@@ -55,9 +67,8 @@ async function updateAssignmentEmbed(guild) {
                 .setColor(0x00AEFF)
                 .setTimestamp()]
         });
-        console.log(`[EMBED] Assignment embed updated in ${guild.name}`);
     } catch (e) {
-        console.warn('[EMBED ERROR]', e.message);
+        console.warn('Embed update error:', e.message);
     }
 }
 
@@ -68,110 +79,67 @@ client.once('ready', async () => {
         new SlashCommandBuilder().setName('assignmyselfto').setDescription('Assign yourself to a profession')
             .addStringOption(opt => opt.setName('profession').setDescription('Profession').setRequired(true)
                 .addChoices(...professions.map(p => ({ name: p, value: p })))),
-        new SlashCommandBuilder().setName('profession').setDescription('Top 5 in a profession')
-            .addStringOption(opt => opt.setName('profession').setDescription('Profession').setRequired(true)
-                .addChoices(...professions.map(p => ({ name: p, value: p })))),
-        new SlashCommandBuilder().setName('testwelcome').setDescription('Test welcome embed'),
-        new SlashCommandBuilder().setName('selectprofession').setDescription('Choose a profession'),
-        new SlashCommandBuilder().setName('removeprofession').setDescription('Remove your profession role')
-            .addStringOption(opt => opt.setName('profession').setDescription('Profession').setRequired(true)
-                .addChoices(...professions.map(p => ({ name: p, value: p })))),
         new SlashCommandBuilder().setName('settimer').setDescription('Set a timer that pings you after given minutes')
             .addIntegerOption(opt => opt.setName('minutes').setDescription('How many minutes').setRequired(true))
-            .addStringOption(opt => opt.setName('note').setDescription('Optional note'))
+            .addStringOption(opt => opt.setName('note').setDescription('Optional note')),
+        new SlashCommandBuilder().setName('selectprofession').setDescription('Choose a profession')
     ];
     for (const [_, guild] of client.guilds.cache) {
         await guild.commands.set(commands.map(cmd => cmd.toJSON()));
-        console.log(`📋 Registered slash commands in ${guild.name} (${guild.id})`);
         await guild.members.fetch();
+        loadAssignments();
         if (assignmentData.messageId && assignmentData.channelId) await updateAssignmentEmbed(guild);
+        console.log(`✅ Commands registered in ${guild.name}`);
     }
 });
 
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.guild) return;
     const { commandName, guild, user } = interaction;
-    const member = await guild.members.fetch(user.id);
-    const profession = interaction.options?.getString?.('profession');
 
     if (interaction.isChatInputCommand()) {
+        const member = await guild.members.fetch(user.id);
+        const profession = interaction.options.getString('profession');
 
         if (commandName === 'setupassignments') {
-            console.log(`[SETUP] ${user.tag} (${user.id}) initialized board in ${guild.name}`);
             const embed = new EmbedBuilder().setTitle('📋 Assigned Professions').setDescription('*Initializing...*').setColor(0x00AEFF);
             const msg = await interaction.channel.send({ embeds: [embed] });
             assignmentData.channelId = msg.channel.id;
             assignmentData.messageId = msg.id;
             saveAssignments();
+            console.log(`[SETUP] ${user.tag} initialized assignment board`);
             return void interaction.reply({ content: '✅ Assignment board initialized.', ephemeral: true });
         }
 
         if (commandName === 'assignmyselfto') {
+            loadAssignments();
             const role = member.roles.cache.find(r => r.name.startsWith(`${profession} `));
             if (!role) return void interaction.reply({ content: `❌ You don't have a role for **${profession}**.`, ephemeral: true });
-            assignedProfessionByUser.set(user.id, profession);
+            assignmentData.assigned[user.id] = profession;
             saveAssignments();
             await updateAssignmentEmbed(guild);
-            console.log(`[ASSIGN] ${user.tag} (${user.id}) assigned to ${profession}`);
+            console.log(`[ASSIGN] ${user.tag} assigned to ${profession}`);
             return void interaction.reply({ content: `✅ Assigned to **${profession}**.`, ephemeral: true });
         }
 
         if (commandName === 'settimer') {
             const minutes = interaction.options.getInteger('minutes');
-            let note = interaction.options.getString('note')?.trim() || '⏰ Your timer is up!';
-            console.log(`[TIMER] ${user.tag} (${user.id}) set timer for ${minutes} min – Note: "${note}"`);
+            let note = interaction.options.getString('note')?.trim();
+            if (!note) note = '⏰ Your timer is up!';
+            const delayMs = minutes * 60 * 1000;
+
             await interaction.reply({
                 content: `⏳ Timer set for ${minutes} minute(s).\nI’ll remind you with: "${note}"`,
                 ephemeral: true
             });
 
+            console.log(`[TIMER] ${user.tag} set timer for ${minutes} min – Note: "${note}"`);
+
             setTimeout(() => {
-                const extra = Math.random() < 0.5 ? `\n~# You can set your own timers using /settimer` : '';
-                interaction.channel.send({ content: `🔔 <@${user.id}> ${note}${extra}` });
-                console.log(`[TIMER DONE] Pinged ${user.tag} (${user.id})`);
-            }, minutes * 60 * 1000);
-            return;
-        }
-
-        if (commandName === 'profession') {
-            const pattern = new RegExp(`^${profession} (\\d{1,3})$`);
-            const scored = [];
-            guild.members.cache.forEach(m => {
-                const role = m.roles.cache.find(r => pattern.test(r.name));
-                if (role) {
-                    const lvl = parseInt(role.name.match(pattern)[1]);
-                    scored.push({ user: m.user, level: lvl });
-                }
-            });
-            if (!scored.length) return void interaction.reply({ content: `❌ No users found for ${profession}`, ephemeral: true });
-            const embed = new EmbedBuilder()
-                .setTitle(`🏆 Top ${profession}`)
-                .setDescription(scored.sort((a, b) => b.level - a.level).slice(0, 5)
-                    .map((u, i) => `**#${i + 1}** – <@${u.user.id}>: Level ${u.level}`).join('\n'))
-                .setColor(0xFFD700);
-            console.log(`[TOP 5] ${user.tag} (${user.id}) requested top 5 for ${profession}`);
-            return void interaction.reply({ embeds: [embed] });
-        }
-
-        if (commandName === 'removeprofession') {
-            const role = member.roles.cache.find(r => r.name.startsWith(`${profession} `));
-            if (role) await member.roles.remove(role);
-            console.log(`[REMOVE] ${user.tag} (${user.id}) removed ${profession}`);
-            return void interaction.reply({ content: role ? `✅ Removed ${role.name}` : `❌ No role for ${profession}`, ephemeral: true });
-        }
-
-        if (commandName === 'testwelcome') {
-            const channel = guild.channels.cache.get(WELCOME_CHANNEL_ID);
-            if (!channel) return;
-            const embed = new EmbedBuilder()
-                .setColor(0x00AEFF)
-                .setTitle(`🎉 Welcome to ${guild.name}!`)
-                .setDescription(`Hey ${user.username}, we're glad you're here!\n\nUse \`/selectprofession\` to begin.`)
-                .setThumbnail(user.displayAvatarURL({ dynamic: true }))
-                .setFooter({ text: `Member #${guild.memberCount}` })
-                .setTimestamp();
-            console.log(`[WELCOME TEST] Sent welcome embed for ${user.tag} (${user.id})`);
-            return void channel.send({ embeds: [embed] });
+                const extraLine = Math.random() < 0.5 ? `\n~# You can set your own timers using /settimer` : '';
+                interaction.channel.send({ content: `🔔 <@${user.id}> ${note}${extraLine}` });
+                console.log(`[TIMER DONE] Pinged ${user.tag}`);
+            }, delayMs);
         }
 
         if (commandName === 'selectprofession') {
@@ -180,7 +148,7 @@ client.on(Events.InteractionCreate, async interaction => {
             const menu = new StringSelectMenuBuilder().setCustomId('select_profession')
                 .setPlaceholder('Select a profession...')
                 .addOptions(professions.map(p => ({ label: p, value: p })));
-            console.log(`[SELECT] ${user.tag} (${user.id}) opened selector`);
+            console.log(`[SELECT] ${user.tag} opened profession selector`);
             return void interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
         }
     }
@@ -188,12 +156,12 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isStringSelectMenu()) {
         if (interaction.customId === 'select_profession') {
             const prof = interaction.values[0];
-            console.log(`[SELECT] ${user.tag} (${user.id}) selected ${prof}`);
             const embed = new EmbedBuilder().setTitle(`Profession: ${prof}`)
                 .setDescription(`Now choose your level for **${prof}**`).setColor(0xFFD700);
             const levelMenu = new StringSelectMenuBuilder().setCustomId(`select_level_${prof}`)
                 .setPlaceholder('Select a level...')
                 .addOptions(levels.map(l => ({ label: `Level ${l}`, value: l })));
+            console.log(`[LEVEL MENU] ${interaction.user.tag} picked ${prof}`);
             return void interaction.update({ embeds: [embed], components: [new ActionRowBuilder().addComponents(levelMenu)] });
         }
 
@@ -201,30 +169,30 @@ client.on(Events.InteractionCreate, async interaction => {
             const prof = interaction.customId.replace('select_level_', '');
             const level = interaction.values[0];
             const roleName = `${prof} ${level}`;
-            const member = await interaction.guild.members.fetch(interaction.user.id);
-            console.log(`[LEVEL] ${user.tag} (${user.id}) selected level ${level} for ${prof}`);
+            const guild = interaction.guild;
+            const member = await guild.members.fetch(interaction.user.id);
 
             const oldRole = member.roles.cache.find(r => r.name.startsWith(`${prof} `));
             if (oldRole) await member.roles.remove(oldRole);
 
-            let role = interaction.guild.roles.cache.find(r => r.name === roleName);
-            if (!role) {
-                role = await interaction.guild.roles.create({
-                    name: roleName,
-                    color: 0x3498db,
-                    hoist: true,
-                    mentionable: true,
-                    reason: `Created for ${prof} ${level}`
-                });
-            }
+            let role = guild.roles.cache.find(r => r.name === roleName);
+            if (!role) role = await guild.roles.create({
+                name: roleName,
+                color: 0x3498db,
+                hoist: true,
+                mentionable: true,
+                reason: `Created for ${prof} ${level}`
+            });
 
             await member.roles.add(role);
 
-            if (assignedProfessionByUser.get(member.id) === prof) {
+            loadAssignments();
+            if (assignmentData.assigned[member.id] === prof) {
                 saveAssignments();
-                await updateAssignmentEmbed(interaction.guild);
+                await updateAssignmentEmbed(guild);
             }
 
+            console.log(`[LEVEL SELECTED] ${interaction.user.tag} now has role ${roleName}`);
             return void interaction.update({ content: `✅ Assigned **${roleName}**.`, embeds: [], components: [] });
         }
     }
