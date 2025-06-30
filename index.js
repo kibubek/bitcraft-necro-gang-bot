@@ -39,6 +39,25 @@ function saveAssignments() {
         console.error('[SAVE ERROR]', e.message);
     }
 }
+async function syncAssignedRoles(guild) {
+    loadAssignments();
+    const assigned = assignmentData.assigned;
+
+    for (const [userId, professions] of Object.entries(assigned)) {
+        const member = await guild.members.fetch(userId).catch(() => null);
+        if (!member) continue;
+
+        for (const prof of professions) {
+            const role = guild.roles.cache.find(r => r.name === prof);
+            if (!role) continue;
+
+            if (!member.roles.cache.has(role.id)) {
+                await member.roles.add(role);
+                console.log(`[SYNC] Added missing role "${prof}" to ${member.user.tag}`);
+            }
+        }
+    }
+}
 
 async function updateAssignmentEmbed(guild) {
     if (!assignmentData.channelId || !assignmentData.messageId) return;
@@ -55,7 +74,7 @@ async function updateAssignmentEmbed(guild) {
                     const member = guild.members.cache.get(id);
                     if (!member) return null;
                     const role = member.roles.cache.find(r => r.name.startsWith(`${prof} `));
-                    return role ? `- ${member.displayName} – ${role.name}` : null;
+                    return role ? `- <@${member.id}> – ${role.name}` : null;
                 }).filter(Boolean);
             return `### ${prof}\n${entries.length ? entries.join('\n') : '*No one assigned*'}`;
         });
@@ -68,7 +87,7 @@ async function updateAssignmentEmbed(guild) {
                 .setTimestamp()]
         });
     } catch (e) {
-        console.warn('Embed update error:', e.message);
+        console.warn('Embed update error:', e);
     }
 }
 
@@ -90,9 +109,11 @@ client.once('ready', async () => {
     for (const [_, guild] of client.guilds.cache) {
         await guild.commands.set(commands.map(cmd => cmd.toJSON()));
         await guild.members.fetch();
+
         loadAssignments();
         if (assignmentData.messageId && assignmentData.channelId) await updateAssignmentEmbed(guild);
         console.log(`✅ Commands registered in ${guild.name}`);
+        await syncAssignedRoles(guild);
     }
 });
 
@@ -118,10 +139,19 @@ client.on(Events.InteractionCreate, async interaction => {
             loadAssignments();
             const role = member.roles.cache.find(r => r.name.startsWith(`${profession} `));
             if (!role) return void interaction.reply({ content: `❌ You don't have a role for **${profession}**.`, ephemeral: true });
+
             if (!Array.isArray(assignmentData.assigned[user.id])) assignmentData.assigned[user.id] = [];
             if (!assignmentData.assigned[user.id].includes(profession)) {
                 assignmentData.assigned[user.id].push(profession);
+
+                // Assign generic profession role if exists
+                const genericRole = guild.roles.cache.find(r => r.name === profession);
+                if (genericRole && !member.roles.cache.has(genericRole.id)) {
+                    await member.roles.add(genericRole).catch(console.warn);
+                    console.log(`[ROLE] Added generic role ${profession} to ${user.tag}`);
+                }
             }
+
             saveAssignments();
             await updateAssignmentEmbed(guild);
             console.log(`[ASSIGN] ${user.tag} assigned to ${profession}`);
@@ -134,8 +164,18 @@ client.on(Events.InteractionCreate, async interaction => {
             if (!Array.isArray(list) || !list.includes(profession)) {
                 return void interaction.reply({ content: `❌ You are not assigned to **${profession}**.`, ephemeral: true });
             }
+
             assignmentData.assigned[user.id] = list.filter(p => p !== profession);
             if (assignmentData.assigned[user.id].length === 0) delete assignmentData.assigned[user.id];
+
+            // Remove generic profession role if no longer assigned to it
+            const stillAssigned = Array.isArray(assignmentData.assigned[user.id]) && assignmentData.assigned[user.id].includes(profession);
+            const genericRole = guild.roles.cache.find(r => r.name === profession);
+            if (!stillAssigned && genericRole && member.roles.cache.has(genericRole.id)) {
+                await member.roles.remove(genericRole).catch(console.warn);
+                console.log(`[ROLE] Removed generic role ${profession} from ${user.tag}`);
+            }
+
             saveAssignments();
             await updateAssignmentEmbed(guild);
             console.log(`[UNASSIGN] ${user.tag} unassigned from ${profession}`);
