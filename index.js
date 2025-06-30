@@ -1,119 +1,180 @@
 require('dotenv').config();
 const {
-    Client, GatewayIntentBits, Partials,
-    ActionRowBuilder, StringSelectMenuBuilder,
-    EmbedBuilder, SlashCommandBuilder, Events
+    Client,
+    GatewayIntentBits,
+    Partials,
+    ActionRowBuilder,
+    StringSelectMenuBuilder,
+    EmbedBuilder,
+    SlashCommandBuilder,
+    Events
 } = require('discord.js');
-const fs = require('fs');
+const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
 const TOKEN = process.env.DISCORD_TOKEN;
-const ASSIGNMENT_FILE = path.join(__dirname, 'assignments.json');
-const WELCOME_CHANNEL_ID = '1384144470261633147';
+const ASSIGNMENT_CHANNEL_ID = '1386402550399500409';
+const DB_PATH = path.join(__dirname, 'assignments.db');
+
+// Initialize SQLite database
+const db = new sqlite3.Database(DB_PATH, err => {
+    if (err) return console.error('[DB]', err.message);
+    console.log('✅ Connected to SQLite database.');
+});
+
+db.serialize(() => {
+    db.run(`
+    CREATE TABLE IF NOT EXISTS assignments (
+      user_id    TEXT NOT NULL,
+      profession TEXT NOT NULL,
+      PRIMARY KEY (user_id, profession)
+    )
+  `);
+    db.run(`
+    CREATE TABLE IF NOT EXISTS meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `);
+});
+
+const professions = [
+    "Carpentry", "Farming", "Fishing", "Foraging", "Forestry",
+    "Hunting", "Leatherworking", "Masonry", "Mining", "Scholar",
+    "Smithing", "Tailoring", "Cooking"
+];
+const levels = ["10", "20", "30", "40", "50", "60", "70", "80", "90", "100"];
+
+// Helpers for SQLite operations
+function fetchAllAssignments() {
+    return new Promise((resolve, reject) => {
+        db.all(`SELECT user_id, profession FROM assignments`, [], (err, rows) => {
+            if (err) return reject(err);
+            const assigned = {};
+            for (const { user_id, profession } of rows) {
+                assigned[user_id] = assigned[user_id] || [];
+                assigned[user_id].push(profession);
+            }
+            resolve(assigned);
+        });
+    });
+}
+
+function getMeta(key) {
+    return new Promise((resolve, reject) => {
+        db.get(`SELECT value FROM meta WHERE key = ?`, [key], (err, row) => {
+            if (err) return reject(err);
+            resolve(row?.value);
+        });
+    });
+}
+
+function setMeta(key, value) {
+    return new Promise((resolve, reject) => {
+        db.run(
+            `INSERT INTO meta(key, value) VALUES(?, ?)
+       ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+            [key, value],
+            err => (err ? reject(err) : resolve())
+        );
+    });
+}
+
+function assignedToList(profession, assignedMap, guild) {
+    const out = [];
+    for (const [userId, profs] of Object.entries(assignedMap)) {
+        if (!profs.includes(profession)) continue;
+        const member = guild.members.cache.get(userId);
+        if (!member) continue;
+        const role = member.roles.cache.find(r => r.name.startsWith(`${profession} `));
+        if (!role) continue;
+        out.push({ id: userId, roleName: role.name });
+    }
+    return out;
+}
+
+// Robust embed updater
+async function updateAssignmentEmbed(guild) {
+    try {
+        const assigned = await fetchAllAssignments();
+        const channel = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
+        const storedId = await getMeta('board_message_id');
+        let message;
+
+        if (storedId) {
+            try {
+                const fetched = await channel.messages.fetch(storedId);
+                if (fetched && typeof fetched.edit === 'function') {
+                    message = fetched;
+                } else {
+                    throw new Error('Stored message invalid');
+                }
+            } catch (err) {
+                console.warn('[RECOVERY] Assignment message missing or invalid. Creating a new one...');
+            }
+        }
+
+        if (!message) {
+            const initEmbed = new EmbedBuilder()
+                .setTitle('📋 Assigned Professions')
+                .setDescription('*Initializing...*')
+                .setColor(0x00AEFF);
+            const newMsg = await channel.send({ embeds: [initEmbed] });
+            await setMeta('board_message_id', newMsg.id);
+            message = newMsg;
+        }
+
+        const sections = professions.map(prof => {
+            const entries = assignedToList(prof, assigned, guild)
+                .map(e => `- <@${e.id}> – ${e.roleName}`);
+            return `### ${prof}\n${entries.length ? entries.join('\n') : '*No one assigned*'}`;
+        });
+
+        const updatedEmbed = new EmbedBuilder()
+            .setTitle('📋 Assigned Professions')
+            .setDescription(sections.join('\n\n'))
+            .setColor(0x00AEFF)
+            .setTimestamp();
+
+        await message.edit({ embeds: [updatedEmbed] });
+    } catch (e) {
+        console.warn('Embed update error:', e);
+    }
+}
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
     partials: [Partials.GuildMember]
 });
 
-const professions = ["Carpentry", "Farming", "Fishing", "Foraging", "Forestry", "Hunting", "Leatherworking", "Masonry", "Mining", "Scholar", "Smithing", "Tailoring", "Cooking"];
-const levels = ["10", "20", "30", "40", "50", "60", "70", "80", "90", "100"];
-
-let assignmentData = { assigned: {}, messageId: null, channelId: null };
-
-function loadAssignments() {
-    if (fs.existsSync(ASSIGNMENT_FILE)) {
-        try {
-            assignmentData = JSON.parse(fs.readFileSync(ASSIGNMENT_FILE, 'utf8'));
-        } catch (e) {
-            console.warn('[LOAD ERROR]', e.message);
-            assignmentData = { assigned: {}, messageId: null, channelId: null };
-        }
-    }
-}
-
-function saveAssignments() {
-    try {
-        fs.writeFileSync(ASSIGNMENT_FILE, JSON.stringify(assignmentData, null, 2));
-    } catch (e) {
-        console.error('[SAVE ERROR]', e.message);
-    }
-}
-async function syncAssignedRoles(guild) {
-    loadAssignments();
-    const assigned = assignmentData.assigned;
-
-    for (const [userId, professions] of Object.entries(assigned)) {
-        const member = await guild.members.fetch(userId).catch(() => null);
-        if (!member) continue;
-
-        for (const prof of professions) {
-            const role = guild.roles.cache.find(r => r.name === prof);
-            if (!role) continue;
-
-            if (!member.roles.cache.has(role.id)) {
-                await member.roles.add(role);
-                console.log(`[SYNC] Added missing role "${prof}" to ${member.user.tag}`);
-            }
-        }
-    }
-}
-
-async function updateAssignmentEmbed(guild) {
-    if (!assignmentData.channelId || !assignmentData.messageId) return;
-    loadAssignments();
-    const assigned = assignmentData.assigned;
-    try {
-        const channel = await guild.channels.fetch(assignmentData.channelId);
-        const message = await channel.messages.fetch(assignmentData.messageId);
-
-        const sections = professions.map(prof => {
-            const entries = Object.entries(assigned)
-                .filter(([, list]) => Array.isArray(list) && list.includes(prof))
-                .map(([id]) => {
-                    const member = guild.members.cache.get(id);
-                    if (!member) return null;
-                    const role = member.roles.cache.find(r => r.name.startsWith(`${prof} `));
-                    return role ? `- <@${member.id}> – ${role.name}` : null;
-                }).filter(Boolean);
-            return `### ${prof}\n${entries.length ? entries.join('\n') : '*No one assigned*'}`;
-        });
-
-        await message.edit({
-            embeds: [new EmbedBuilder()
-                .setTitle('📋 Assigned Professions')
-                .setDescription(sections.join('\n\n'))
-                .setColor(0x00AEFF)
-                .setTimestamp()]
-        });
-    } catch (e) {
-        console.warn('Embed update error:', e);
-    }
-}
-
 client.once('ready', async () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
+
     const commands = [
         new SlashCommandBuilder().setName('setupassignments').setDescription('Initialize the assignment board'),
-        new SlashCommandBuilder().setName('assignmyselfto').setDescription('Assign yourself to a profession')
+        new SlashCommandBuilder()
+            .setName('assignmyselfto')
+            .setDescription('Assign yourself to a profession')
             .addStringOption(opt => opt.setName('profession').setDescription('Profession').setRequired(true)
                 .addChoices(...professions.map(p => ({ name: p, value: p })))),
-        new SlashCommandBuilder().setName('unassignmyselffrom').setDescription('Unassign yourself from a profession')
+        new SlashCommandBuilder()
+            .setName('unassignmyselffrom')
+            .setDescription('Unassign yourself from a profession')
             .addStringOption(opt => opt.setName('profession').setDescription('Profession').setRequired(true)
                 .addChoices(...professions.map(p => ({ name: p, value: p })))),
-        new SlashCommandBuilder().setName('settimer').setDescription('Set a timer that pings you after given minutes')
+        new SlashCommandBuilder()
+            .setName('settimer')
+            .setDescription('Set a timer that pings you after given minutes')
             .addIntegerOption(opt => opt.setName('minutes').setDescription('How many minutes').setRequired(true))
             .addStringOption(opt => opt.setName('note').setDescription('Optional note')),
         new SlashCommandBuilder().setName('selectprofession').setDescription('Choose a profession')
     ];
+
     for (const [_, guild] of client.guilds.cache) {
         await guild.commands.set(commands.map(cmd => cmd.toJSON()));
         await guild.members.fetch();
-
-        loadAssignments();
-        if (assignmentData.messageId && assignmentData.channelId) await updateAssignmentEmbed(guild);
+        await updateAssignmentEmbed(guild);
         console.log(`✅ Commands registered in ${guild.name}`);
-        await syncAssignedRoles(guild);
     }
 });
 
@@ -126,57 +187,45 @@ client.on(Events.InteractionCreate, async interaction => {
         const profession = interaction.options.getString('profession');
 
         if (commandName === 'setupassignments') {
-            const embed = new EmbedBuilder().setTitle('📋 Assigned Professions').setDescription('*Initializing...*').setColor(0x00AEFF);
-            const msg = await interaction.channel.send({ embeds: [embed] });
-            assignmentData.channelId = msg.channel.id;
-            assignmentData.messageId = msg.id;
-            saveAssignments();
+            const channel = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
+            const embed = new EmbedBuilder()
+                .setTitle('📋 Assigned Professions')
+                .setDescription('*Initializing...*')
+                .setColor(0x00AEFF);
+            const msg = await channel.send({ embeds: [embed] });
+            await setMeta('board_message_id', msg.id);
             console.log(`[SETUP] ${user.tag} initialized assignment board`);
             return void interaction.reply({ content: '✅ Assignment board initialized.', ephemeral: true });
         }
 
         if (commandName === 'assignmyselfto') {
-            loadAssignments();
-            const role = member.roles.cache.find(r => r.name.startsWith(`${profession} `));
-            if (!role) return void interaction.reply({ content: `❌ You don't have a role for **${profession}**.`, ephemeral: true });
-
-            if (!Array.isArray(assignmentData.assigned[user.id])) assignmentData.assigned[user.id] = [];
-            if (!assignmentData.assigned[user.id].includes(profession)) {
-                assignmentData.assigned[user.id].push(profession);
-
-                // Assign generic profession role if exists
-                const genericRole = guild.roles.cache.find(r => r.name === profession);
-                if (genericRole && !member.roles.cache.has(genericRole.id)) {
-                    await member.roles.add(genericRole).catch(console.warn);
-                    console.log(`[ROLE] Added generic role ${profession} to ${user.tag}`);
-                }
+            const generic = guild.roles.cache.find(r => r.name === profession);
+            if (!generic) {
+                return void interaction.reply({ content: `❌ Role **${profession}** not found.`, ephemeral: true });
             }
-
-            saveAssignments();
+            await new Promise((res, rej) => {
+                db.run(
+                    `INSERT OR IGNORE INTO assignments (user_id, profession) VALUES (?, ?)`,
+                    [user.id, profession],
+                    err => err ? rej(err) : res()
+                );
+            });
+            await member.roles.add(generic);
             await updateAssignmentEmbed(guild);
             console.log(`[ASSIGN] ${user.tag} assigned to ${profession}`);
             return void interaction.reply({ content: `✅ Assigned to **${profession}**.`, ephemeral: true });
         }
 
         if (commandName === 'unassignmyselffrom') {
-            loadAssignments();
-            const list = assignmentData.assigned[user.id];
-            if (!Array.isArray(list) || !list.includes(profession)) {
-                return void interaction.reply({ content: `❌ You are not assigned to **${profession}**.`, ephemeral: true });
-            }
-
-            assignmentData.assigned[user.id] = list.filter(p => p !== profession);
-            if (assignmentData.assigned[user.id].length === 0) delete assignmentData.assigned[user.id];
-
-            // Remove generic profession role if no longer assigned to it
-            const stillAssigned = Array.isArray(assignmentData.assigned[user.id]) && assignmentData.assigned[user.id].includes(profession);
-            const genericRole = guild.roles.cache.find(r => r.name === profession);
-            if (!stillAssigned && genericRole && member.roles.cache.has(genericRole.id)) {
-                await member.roles.remove(genericRole).catch(console.warn);
-                console.log(`[ROLE] Removed generic role ${profession} from ${user.tag}`);
-            }
-
-            saveAssignments();
+            await new Promise((res, rej) => {
+                db.run(
+                    `DELETE FROM assignments WHERE user_id = ? AND profession = ?`,
+                    [user.id, profession],
+                    err => err ? rej(err) : res()
+                );
+            });
+            const generic = guild.roles.cache.find(r => r.name === profession);
+            if (generic) await member.roles.remove(generic);
             await updateAssignmentEmbed(guild);
             console.log(`[UNASSIGN] ${user.tag} unassigned from ${profession}`);
             return void interaction.reply({ content: `✅ Unassigned from **${profession}**.`, ephemeral: true });
@@ -184,8 +233,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (commandName === 'settimer') {
             const minutes = interaction.options.getInteger('minutes');
-            let note = interaction.options.getString('note')?.trim();
-            if (!note) note = '⏰ Your timer is up!';
+            let note = interaction.options.getString('note')?.trim() || '⏰ Your timer is up!';
             const delayMs = minutes * 60 * 1000;
 
             await interaction.reply({
@@ -194,7 +242,6 @@ client.on(Events.InteractionCreate, async interaction => {
             });
 
             console.log(`[TIMER] ${user.tag} set timer for ${minutes} min – Note: "${note}"`);
-
             setTimeout(() => {
                 const extraLine = Math.random() < 0.5 ? `\n~# You can set your own timers using /settimer` : '';
                 interaction.channel.send({ content: `🔔 <@${user.id}> ${note}${extraLine}` });
@@ -203,9 +250,12 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         if (commandName === 'selectprofession') {
-            const embed = new EmbedBuilder().setTitle('Choose Your Profession')
-                .setDescription('Select your profession below').setColor(0x00AEFF);
-            const menu = new StringSelectMenuBuilder().setCustomId('select_profession')
+            const embed = new EmbedBuilder()
+                .setTitle('Choose Your Profession')
+                .setDescription('Select your profession below')
+                .setColor(0x00AEFF);
+            const menu = new StringSelectMenuBuilder()
+                .setCustomId('select_profession')
                 .setPlaceholder('Select a profession...')
                 .addOptions(professions.map(p => ({ label: p, value: p })));
             console.log(`[SELECT] ${user.tag} opened profession selector`);
@@ -216,9 +266,12 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isStringSelectMenu()) {
         if (interaction.customId === 'select_profession') {
             const prof = interaction.values[0];
-            const embed = new EmbedBuilder().setTitle(`Profession: ${prof}`)
-                .setDescription(`Now choose your level for **${prof}**`).setColor(0xFFD700);
-            const levelMenu = new StringSelectMenuBuilder().setCustomId(`select_level_${prof}`)
+            const embed = new EmbedBuilder()
+                .setTitle(`Profession: ${prof}`)
+                .setDescription(`Now choose your level for **${prof}**`)
+                .setColor(0xFFD700);
+            const levelMenu = new StringSelectMenuBuilder()
+                .setCustomId(`select_level_${prof}`)
                 .setPlaceholder('Select a level...')
                 .addOptions(levels.map(l => ({ label: `Level ${l}`, value: l })));
             console.log(`[LEVEL MENU] ${interaction.user.tag} picked ${prof}`);
@@ -229,30 +282,24 @@ client.on(Events.InteractionCreate, async interaction => {
             const prof = interaction.customId.replace('select_level_', '');
             const level = interaction.values[0];
             const roleName = `${prof} ${level}`;
-            const guild = interaction.guild;
-            const member = await guild.members.fetch(interaction.user.id);
-
+            const member = await interaction.guild.members.fetch(interaction.user.id);
             const oldRole = member.roles.cache.find(r => r.name.startsWith(`${prof} `));
             if (oldRole) await member.roles.remove(oldRole);
 
-            let role = guild.roles.cache.find(r => r.name === roleName);
-            if (!role) role = await guild.roles.create({
-                name: roleName,
-                color: 0x3498db,
-                hoist: true,
-                mentionable: true,
-                reason: `Created for ${prof} ${level}`
-            });
-
-            await member.roles.add(role);
-
-            loadAssignments();
-            if (Array.isArray(assignmentData.assigned[member.id]) && assignmentData.assigned[member.id].includes(prof)) {
-                saveAssignments();
-                await updateAssignmentEmbed(guild);
+            let role = interaction.guild.roles.cache.find(r => r.name === roleName);
+            if (!role) {
+                role = await interaction.guild.roles.create({
+                    name: roleName,
+                    color: 0x3498db,
+                    hoist: true,
+                    mentionable: true,
+                    reason: `Created for ${prof} ${level}`
+                });
             }
-
+            await member.roles.add(role);
             console.log(`[LEVEL SELECTED] ${interaction.user.tag} now has role ${roleName}`);
+            // Update the assignment board embed
+            await updateAssignmentEmbed(interaction.guild);
             return void interaction.update({ content: `✅ Assigned **${roleName}**.`, embeds: [], components: [] });
         }
     }
