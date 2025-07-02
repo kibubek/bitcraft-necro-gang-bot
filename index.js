@@ -21,7 +21,7 @@ const warn = (...args) => console.warn(new Date().toISOString(), ...args);
 const error = (...args) => console.error(new Date().toISOString(), ...args);
 
 const TOKEN = process.env.DISCORD_TOKEN;
-const ASSIGNMENT_CHANNEL_ID = process.env.ASSIGNMENT_CHANNEL_ID
+const ASSIGNMENT_CHANNEL_ID = process.env.ASSIGNMENT_CHANNEL_ID;
 const DB_PATH = path.join(__dirname, 'assignments.db');
 
 // Initialize SQLite database
@@ -29,8 +29,6 @@ const db = new sqlite3.Database(DB_PATH, err => {
     if (err) return error('[DB]', err.message);
     log(`✅ Connected to SQLite database. DEV=${DEV}`);
 });
-
-
 
 db.serialize(() => {
     db.run(`
@@ -50,6 +48,16 @@ db.serialize(() => {
         )
     `);
     db.run(`
+        CREATE TABLE IF NOT EXISTS armor (
+            user_id  TEXT NOT NULL,
+            material TEXT NOT NULL,
+            piece    TEXT NOT NULL,
+            tier     INTEGER NOT NULL,
+            rarity   TEXT NOT NULL,
+            PRIMARY KEY (user_id, material, piece)
+        )
+    `);
+    db.run(`
         CREATE TABLE IF NOT EXISTS meta (
             key   TEXT PRIMARY KEY,
             value TEXT
@@ -58,86 +66,81 @@ db.serialize(() => {
 });
 
 // Static data
-const professions = [
-    "Carpentry", "Farming", "Fishing", "Foraging", "Forestry",
-    "Hunting", "Leatherworking", "Masonry", "Mining", "Scholar",
-    "Smithing", "Tailoring", "Cooking"
-];
+const professions = ["Carpentry", "Farming", "Fishing", "Foraging", "Forestry", "Hunting", "Leatherworking", "Masonry", "Mining", "Scholar", "Smithing", "Tailoring", "Cooking"];
 const levels = ["10", "20", "30", "40", "50", "60", "70", "80", "90", "100"];
-
-const tools = [
-    "Saw", "Hoe", "Fishing Rod", "Machete", "Axe",
-    "Hunting Bow", "Knife", "Chisel", "Pickaxe",
-    "Quill", "Hammer", "Shears"
-];
+const tools = ["Saw", "Hoe", "Fishing Rod", "Machete", "Axe", "Hunting Bow", "Knife", "Chisel", "Pickaxe", "Quill", "Hammer", "Shears"];
+const materials = ["Leather", "Cloth", "Plate"];
+const pieces = ["Head", "Chestplate", "Leggings", "Boots", "Gloves"];
 const tiers = Array.from({ length: 10 }, (_, i) => (i + 1).toString());
 const rarities = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"];
 
 // profession → matching tool
 const professionToolMap = {
-    Carpentry: "Saw",
-    Farming: "Hoe",
-    Fishing: "Fishing Rod",
-    Foraging: "Machete",
-    Forestry: "Axe",
-    Hunting: "Hunting Bow",
-    Leatherworking: "Knife",
-    Masonry: "Chisel",
-    Mining: "Pickaxe",
-    Scholar: "Quill",
-    Smithing: "Hammer",
-    Tailoring: "Shears",
-    Cooking: null
+    Carpentry: "Saw", Farming: "Hoe", Fishing: "Fishing Rod",
+    Foraging: "Machete", Forestry: "Axe", Hunting: "Hunting Bow",
+    Leatherworking: "Knife", Masonry: "Chisel", Mining: "Pickaxe",
+    Scholar: "Quill", Smithing: "Hammer", Tailoring: "Shears", Cooking: null
 };
-
-
 
 // SQLite helpers
 function fetchAllAssignments() {
     return new Promise((res, rej) => {
-        db.all(`SELECT user_id, profession FROM assignments`, [], (e, rows) => {
+        db.all(`SELECT user_id,profession FROM assignments`, [], (e, rows) => {
             if (e) return rej(e);
             const m = {};
-            for (const { user_id, profession } of rows) {
-                m[user_id] = m[user_id] || [];
-                m[user_id].push(profession);
-            }
+            rows.forEach(r => {
+                m[r.user_id] = m[r.user_id] || [];
+                m[r.user_id].push(r.profession);
+            });
             res(m);
         });
     });
 }
-
 function fetchAllTools() {
     return new Promise((res, rej) => {
-        db.all(`SELECT user_id, tool, tier, rarity FROM tools`, [], (e, rows) => {
+        db.all(`SELECT user_id,tool,tier,rarity FROM tools`, [], (e, rows) => {
             if (e) return rej(e);
             const m = {};
-            for (const { user_id, tool, tier, rarity } of rows) {
-                m[user_id] = m[user_id] || {};
-                m[user_id][tool] = { tier, rarity };
-            }
+            rows.forEach(r => {
+                m[r.user_id] = m[r.user_id] || {};
+                m[r.user_id][r.tool] = { tier: r.tier, rarity: r.rarity };
+            });
             res(m);
         });
     });
 }
-
+function fetchAllArmor() {
+    return new Promise((res, rej) => {
+        db.all(`SELECT user_id,material,piece,tier,rarity FROM armor`, [], (e, rows) => {
+            if (e) return rej(e);
+            const m = {};
+            rows.forEach(r => {
+                m[r.user_id] = m[r.user_id] || {};
+                m[r.user_id][`${r.material}:${r.piece}`] = {
+                    material: r.material,
+                    piece: r.piece,
+                    tier: r.tier,
+                    rarity: r.rarity
+                };
+            });
+            res(m);
+        });
+    });
+}
 function getMeta(key) {
     return new Promise((res, rej) => {
-        db.get(`SELECT value FROM meta WHERE key = ?`, [key], (e, row) => {
+        db.get(`SELECT value FROM meta WHERE key=?`, [key], (e, row) => {
             if (e) return rej(e);
             res(row?.value);
         });
     });
 }
-
 function setMeta(key, value) {
     return new Promise((res, rej) => {
-        db.run(
-            `INSERT INTO meta(key,value) VALUES(?,?)
-             ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
-            [key, value],
-            err => err ? rej(err) : res()
-        );
+        db.run(`
+            INSERT INTO meta(key,value) VALUES(?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+        `, [key, value], err => err ? rej(err) : res());
     });
 }
 
@@ -148,23 +151,20 @@ async function updateAssignmentEmbed(guild) {
         return;
     }
     try {
-        const [assignedMap, toolsMap] = await Promise.all([
+        const [assignMap, toolMap, armorMap] = await Promise.all([
             fetchAllAssignments(),
-            fetchAllTools()
+            fetchAllTools(),
+            fetchAllArmor()
         ]);
         const channel = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
         const storedId = await getMeta('board_message_id');
         let message;
-
         if (storedId) {
             try {
-                const fetched = await channel.messages.fetch(storedId);
-                if (fetched.edit) {
-                    message = fetched;
-                    log(`[Embed] Fetched board message ${storedId}`);
-                }
+                const f = await channel.messages.fetch(storedId);
+                if (f.edit) { message = f; log(`[Embed] Fetched ${storedId}`); }
             } catch {
-                warn('[Embed] Could not fetch board message; will recreate.');
+                warn('[Embed] could not fetch, will recreate');
             }
         }
         if (!message) {
@@ -174,16 +174,13 @@ async function updateAssignmentEmbed(guild) {
                 .setColor(0x00AEFF);
             const newMsg = await channel.send({ embeds: [init] });
             await setMeta('board_message_id', newMsg.id);
-            message = newMsg;
-            log(`[Embed] Created new board message ${newMsg.id}`);
+            message = newMsg; log(`[Embed] Created ${newMsg.id}`);
         }
-
         const sections = professions.map(prof => {
-            const users = Object.entries(assignedMap)
-                .filter(([, profs]) => profs.includes(prof))
+            const users = Object.entries(assignMap)
+                .filter(([, ps]) => ps.includes(prof))
                 .map(([uid]) => uid);
             if (!users.length) return `### ${prof}\n*No one assigned*`;
-
             const toolName = professionToolMap[prof];
             const lines = users.map(uid => {
                 const member = guild.members.cache.get(uid);
@@ -191,15 +188,18 @@ async function updateAssignmentEmbed(guild) {
                 const profRole = member.roles.cache.find(r => r.name.startsWith(`${prof} `));
                 const profText = profRole ? profRole.name : prof;
                 let toolText = '';
-                if (toolName && toolsMap[uid]?.[toolName]) {
-                    const { tier, rarity } = toolsMap[uid][toolName];
+                if (toolName && toolMap[uid]?.[toolName]) {
+                    const { tier, rarity } = toolMap[uid][toolName];
                     toolText = ` – ${rarity} T${tier} ${toolName}`;
                 }
-                return `- <@${uid}> – ${profText}${toolText}`;
+                let armorText = '';
+                Object.values(armorMap[uid] || {}).forEach(a => {
+                    armorText += `\n    • ${a.material} ${a.piece}: ${a.rarity} T${a.tier}`;
+                });
+                return `- <@${uid}> – ${profText}${toolText}${armorText}`;
             }).filter(Boolean);
             return `### ${prof}\n${lines.join('\n')}`;
         });
-
         const embed = new EmbedBuilder()
             .setTitle('📋 Assigned Professions')
             .setDescription(sections.join('\n\n'))
@@ -208,37 +208,54 @@ async function updateAssignmentEmbed(guild) {
         await message.edit({ embeds: [embed] });
         log('[Embed] Board updated');
     } catch (err) {
-        warn('[Embed] Error updating embed:', err.message);
+        warn('[Embed] update error', err.message);
     }
 }
 
-// Handle the rarity-select menu for /settool (no roles)
+// Helper for valid rarities at a given tier
+const validRaritiesForTier = tier => rarities.filter((_, i) => tier >= i + 1);
+
+// Handle rarity-select for both tools & armor
 async function handleSelectRarity(interaction) {
-    const [, toolKey, tierStr] = interaction.customId.split(':');
-    const tool = toolKey.replace(/_/g, ' ');
-    const tier = parseInt(tierStr, 10);
-    const rarity = interaction.values[0];
+    const [type, k1, k2, k3] = interaction.customId.split(':');
     const uid = interaction.user.id;
 
-    log(`[SetTool] ${interaction.user.tag} → ${tool} T${tier} ${rarity}`);
-
-    await new Promise((res, rej) => {
-        db.run(
-            `INSERT INTO tools(user_id,tool,tier,rarity)
-             VALUES(?,?,?,?)
-             ON CONFLICT(user_id,tool) DO UPDATE
-             SET tier=excluded.tier,
-                 rarity=excluded.rarity`,
-            [uid, tool, tier, rarity],
-            e => e ? rej(e) : res()
-        );
-    });
-    log(`[DB] Saved tool ${tool} for ${interaction.user.tag}`);
+    if (type === 'tool') {
+        const tier = parseInt(k2, 10);
+        const tool = k1.replace(/_/g, ' ');
+        const rarity = interaction.values[0];
+        log(`[SetTool] ${interaction.user.tag} → ${tool} T${tier} ${rarity}`);
+        await new Promise((res, rej) => {
+            db.run(`
+                INSERT INTO tools(user_id,tool,tier,rarity)
+                VALUES(?,?,?,?)
+                ON CONFLICT(user_id,tool) DO UPDATE
+                  SET tier=excluded.tier,
+                      rarity=excluded.rarity
+            `, [uid, tool, tier, rarity], e => e ? rej(e) : res());
+        });
+    } else if (type === 'armor') {
+        const material = k1;
+        const piece = k2;
+        const tier = parseInt(k3, 10);
+        const rarity = interaction.values[0];
+        log(`[SetArmor] ${interaction.user.tag} → ${material} ${piece} T${tier} ${rarity}`);
+        await new Promise((res, rej) => {
+            db.run(`
+                INSERT INTO armor(user_id,material,piece,tier,rarity)
+                VALUES(?,?,?,?,?)
+                ON CONFLICT(user_id,material,piece) DO UPDATE
+                  SET tier=excluded.tier,
+                      rarity=excluded.rarity
+            `, [uid, material, piece, tier, rarity], e => e ? rej(e) : res());
+        });
+    }
 
     await updateAssignmentEmbed(interaction.guild);
-
     return interaction.update({
-        content: `✅ Set **${tool} T${tier} ${rarity}** for <@${uid}>!`,
+        content: `✅ Set **${type === 'tool'
+            ? k1.replace(/_/g, ' ')
+            : `${k1} ${k2}`}**!`,
         embeds: [], components: []
     });
 }
@@ -250,87 +267,67 @@ const client = new Client({
 
 client.once('ready', async () => {
     log(`✅ Logged in as ${client.user.tag}`);
-
     const commands = [
-        new SlashCommandBuilder()
-            .setName('setupassignments')
-            .setDescription('Initialize the assignment board'),
+        new SlashCommandBuilder().setName('setupassignments').setDescription('Initialize board'),
         new SlashCommandBuilder()
             .setName('assignmyselfto')
             .setDescription('Assign yourself to a profession')
-            .addStringOption(opt =>
-                opt.setName('profession')
-                    .setDescription('Profession')
-                    .setRequired(true)
-                    .addChoices(...professions.map(p => ({ name: p, value: p })))
-            ),
+            .addStringOption(o => o.setName('profession').setDescription('Profession').setRequired(true)
+                .addChoices(...professions.map(p => ({ name: p, value: p })))),
         new SlashCommandBuilder()
             .setName('unassignmyselffrom')
             .setDescription('Unassign yourself from a profession')
-            .addStringOption(opt =>
-                opt.setName('profession')
-                    .setDescription('Profession')
-                    .setRequired(true)
-                    .addChoices(...professions.map(p => ({ name: p, value: p })))
-            ),
-        new SlashCommandBuilder()
-            .setName('settimer')
-            .setDescription('Set a timer to ping you')
-            .addIntegerOption(opt =>
-                opt.setName('minutes')
-                    .setDescription('Minutes')
-                    .setRequired(true)
-            )
-            .addStringOption(opt =>
-                opt.setName('note').setDescription('Optional note')
-            ),
+            .addStringOption(o => o.setName('profession').setDescription('Profession').setRequired(true)
+                .addChoices(...professions.map(p => ({ name: p, value: p })))),
         new SlashCommandBuilder()
             .setName('selectprofession')
             .setDescription('Choose a profession'),
         new SlashCommandBuilder()
+            .setName('settimer')
+            .setDescription('Set a timer')
+            .addIntegerOption(o => o.setName('minutes').setDescription('Minutes').setRequired(true))
+            .addStringOption(o => o.setName('note').setDescription('Optional note')),
+        new SlashCommandBuilder()
             .setName('settool')
-            .setDescription('Assign yourself a tool + tier')
-            .addStringOption(opt =>
-                opt.setName('tool')
-                    .setDescription('Tool')
-                    .setRequired(true)
-                    .addChoices(...tools.map(t => ({ name: t, value: t })))
-            )
-            .addStringOption(opt =>
-                opt.setName('tier')
-                    .setDescription('Tier')
-                    .setRequired(true)
-                    .addChoices(...tiers.map(t => ({ name: `T${t}`, value: t })))
-            ),
-        new SlashCommandBuilder()
-            .setName('getmytools')
-            .setDescription('List your tools + tiers + rarities'),
-        new SlashCommandBuilder()
-            .setName('gettools')
-            .setDescription('List another user’s tools')
-            .addUserOption(opt =>
-                opt.setName('target')
-                    .setDescription('Target user')
-                    .setRequired(true)
-            ),
+            .setDescription('Assign a tool + tier')
+            .addStringOption(o => o.setName('tool').setDescription('Tool').setRequired(true)
+                .addChoices(...tools.map(t => ({ name: t, value: t }))))
+            .addStringOption(o => o.setName('tier').setDescription('Tier').setRequired(true)
+                .addChoices(...tiers.map(t => ({ name: `T${t}`, value: t })))),
+
         new SlashCommandBuilder()
             .setName('removetool')
-            .setDescription('Remove one of your tools')
-            .addStringOption(opt =>
-                opt.setName('tool')
-                    .setDescription('Tool to remove')
-                    .setRequired(true)
-                    .addChoices(...tools.map(t => ({ name: t, value: t })))
-            ),
+            .setDescription('Remove a tool')
+            .addStringOption(o => o.setName('tool').setDescription('Tool to remove').setRequired(true)
+                .addChoices(...tools.map(t => ({ name: t, value: t })))),
+        new SlashCommandBuilder()
+            .setName('setarmor')
+            .setDescription('Assign an armor piece')
+            .addStringOption(o => o.setName('material').setDescription('Leather|Cloth|Plate').setRequired(true)
+                .addChoices(...materials.map(m => ({ name: m, value: m }))))
+            .addStringOption(o => o.setName('piece').setDescription('Head|Chestplate|Leggings|Boots|Gloves').setRequired(true)
+                .addChoices(...pieces.map(p => ({ name: p, value: p }))))
+            .addStringOption(o => o.setName('tier').setDescription('Tier').setRequired(true)
+                .addChoices(...tiers.map(t => ({ name: `T${t}`, value: t })))),
+
+        new SlashCommandBuilder()
+            .setName('removearmor')
+            .setDescription('Remove an armor piece')
+            .addStringOption(o => o.setName('material').setDescription('Leather|Cloth|Plate').setRequired(true)
+                .addChoices(...materials.map(m => ({ name: m, value: m }))))
+            .addStringOption(o => o.setName('piece').setDescription('Head|Chestplate|Leggings|Boots|Gloves').setRequired(true)
+                .addChoices(...pieces.map(p => ({ name: p, value: p })))),
+
         new SlashCommandBuilder()
             .setName('topprofession')
-            .setDescription('Show highest level member of a profession')
-            .addStringOption(opt =>
-                opt.setName('profession')
-                    .setDescription('Profession')
-                    .setRequired(true)
-                    .addChoices(...professions.map(p => ({ name: p, value: p })))
-            )
+            .setDescription('Show top member of a profession')
+            .addStringOption(o => o.setName('profession').setDescription('Profession').setRequired(true)
+                .addChoices(...professions.map(p => ({ name: p, value: p })))),
+
+        new SlashCommandBuilder()
+            .setName('info')
+            .setDescription('Show full profile info for a user')
+            .addUserOption(o => o.setName('target').setDescription('User').setRequired(true))
     ].map(cmd => cmd.toJSON());
 
     for (const guild of client.guilds.cache.values()) {
@@ -343,13 +340,12 @@ client.once('ready', async () => {
 
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.guild) return;
-    const { commandName, guild, user } = interaction;
-    const member = await guild.members.fetch(user.id);
+    const { commandName, options, user, guild } = interaction;
 
     if (interaction.isChatInputCommand()) {
         // setupassignments
         if (commandName === 'setupassignments') {
-            log(`[Command] ${user.tag} → /setupassignments`);
+            log(`[Cmd] ${user.tag} → /setupassignments`);
             const ch = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
             const init = new EmbedBuilder()
                 .setTitle('📋 Assigned Professions')
@@ -362,185 +358,229 @@ client.on(Events.InteractionCreate, async interaction => {
 
         // assignmyselfto
         if (commandName === 'assignmyselfto') {
-            const prof = interaction.options.getString('profession');
-            log(`[Command] ${user.tag} → /assignmyselfto ${prof}`);
+            const prof = options.getString('profession');
+            log(`[Cmd] ${user.tag} → /assignmyselfto ${prof}`);
+            await new Promise((r, j) => db.run(
+                `INSERT OR IGNORE INTO assignments(user_id,profession) VALUES(?,?)`,
+                [user.id, prof], e => e ? j(e) : r()
+            ));
             const role = guild.roles.cache.find(r => r.name === prof);
-            if (!role) {
-                warn(`[assignmyselfto] Role ${prof} not found`);
-                return interaction.reply({ content: `❌ Role **${prof}** not found.`, ephemeral: true });
-            }
-            await new Promise((res, rej) => {
-                db.run(
-                    `INSERT OR IGNORE INTO assignments(user_id,profession) VALUES(?,?)`,
-                    [user.id, prof],
-                    err => err ? rej(err) : res()
-                );
-            });
-            await member.roles.add(role);
-            log(`[Role] Assigned ${prof} to ${user.tag}`);
+            if (role) await guild.members.fetch(user.id).then(m => m.roles.add(role));
             await updateAssignmentEmbed(guild);
             return interaction.reply({ content: `✅ Assigned to **${prof}**.`, ephemeral: true });
         }
 
         // unassignmyselffrom
         if (commandName === 'unassignmyselffrom') {
-            const prof = interaction.options.getString('profession');
-            log(`[Command] ${user.tag} → /unassignmyselffrom ${prof}`);
-            await new Promise((res, rej) => {
-                db.run(
-                    `DELETE FROM assignments WHERE user_id=? AND profession=?`,
-                    [user.id, prof],
-                    err => err ? rej(err) : res()
-                );
-            });
+            const prof = options.getString('profession');
+            log(`[Cmd] ${user.tag} → /unassignmyselffrom ${prof}`);
+            await new Promise((r, j) => db.run(
+                `DELETE FROM assignments WHERE user_id=? AND profession=?`,
+                [user.id, prof], e => e ? j(e) : r()
+            ));
             const role = guild.roles.cache.find(r => r.name === prof);
-            if (role) {
-                await member.roles.remove(role);
-                log(`[Role] Removed ${prof} from ${user.tag}`);
-            }
+            if (role) await guild.members.fetch(user.id).then(m => m.roles.remove(role));
             await updateAssignmentEmbed(guild);
             return interaction.reply({ content: `✅ Unassigned from **${prof}**.`, ephemeral: true });
         }
 
         // settimer
         if (commandName === 'settimer') {
-            const minutes = interaction.options.getInteger('minutes');
-            const note = interaction.options.getString('note')?.trim() || '⏰ Your timer is up!';
-            log(`[Command] ${user.tag} → /settimer ${minutes}min`);
+            const minutes = options.getInteger('minutes');
+            const note = options.getString('note')?.trim() || '⏰ Your timer is up!';
+            log(`[Cmd] ${user.tag} → /settimer ${minutes}min`);
             await interaction.reply({ content: `⏳ Timer set for ${minutes} minutes.`, ephemeral: true });
             setTimeout(() => {
                 interaction.channel.send({ content: `🔔 <@${user.id}> ${note}` });
-                log(`[Timer] Reminder sent to ${user.tag}`);
-            }, minutes * 60 * 1000);
+                log(`[Timer] Pinged ${user.tag}`);
+            }, minutes * 60000);
             return;
         }
 
         // selectprofession
         if (commandName === 'selectprofession') {
-            log(`[Command] ${user.tag} → /selectprofession`);
-            const embed = new EmbedBuilder()
-                .setTitle('Choose Your Profession')
-                .setDescription('Select your profession below')
-                .setColor(0x00AEFF);
-            const menu = new StringSelectMenuBuilder()
-                .setCustomId('select_profession')
-                .setPlaceholder('Select profession…')
+            log(`[Cmd] ${user.tag} → /selectprofession`);
+            const embed = new EmbedBuilder().setTitle('Choose a profession').setColor(0x00AEFF);
+            const menu = new StringSelectMenuBuilder().setCustomId('select_profession').setPlaceholder('Profession...')
                 .addOptions(professions.map(p => ({ label: p, value: p })));
             return interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
         }
 
         // settool
         if (commandName === 'settool') {
-            const tool = interaction.options.getString('tool');
-            const tier = parseInt(interaction.options.getString('tier'), 10);
-            log(`[Command] ${user.tag} → /settool ${tool} T${tier}`);
-            const allowed = rarities.filter((_, i) => tier >= i + 1);
-            const toolKey = tool.replace(/\s+/g, '_');
+            const tool = options.getString('tool');
+            const tier = parseInt(options.getString('tier'), 10);
+            log(`[Cmd] ${user.tag} → /settool ${tool} T${tier}`);
+            const valid = validRaritiesForTier(tier);
             const menu = new StringSelectMenuBuilder()
-                .setCustomId(`select_rarity:${toolKey}:${tier}`)
-                .setPlaceholder('Select rarity…')
-                .addOptions(allowed.map(r => ({ label: `${r} T${tier}`, value: r })));
-            const embed = new EmbedBuilder()
-                .setTitle(`Choose rarity for ${tool} T${tier}`)
-                .setDescription('Valid rarities for that tier:')
-                .setColor(0xFFD700);
+                .setCustomId(`tool:${tool.replace(/\s+/g, '_')}:${tier}`)
+                .setPlaceholder('Rarity...')
+                .addOptions(valid.map(r => ({ label: `${r} T${tier}`, value: r })));
+            const embed = new EmbedBuilder().setTitle(`Choose rarity for ${tool} T${tier}`).setColor(0xFFD700);
             return interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
-        }
-
-        // getmytools
-        if (commandName === 'getmytools') {
-            log(`[Command] ${user.tag} → /getmytools`);
-            db.all(`SELECT tool,tier,rarity FROM tools WHERE user_id=?`, [user.id], (e, rows) => {
-                if (e) { error('[getmytools]', e.message); return interaction.reply({ content: '❌ Error.', ephemeral: true }); }
-                if (!rows.length) return interaction.reply({ content: "You have no tools.", ephemeral: true });
-                const list = rows.map(r => `• ${r.tool}: T${r.tier} ${r.rarity}`).join('\n');
-                return interaction.reply({ embeds: [new EmbedBuilder().setTitle(`${user.username}'s Tools`).setDescription(list).setColor(0x00AEFF)], ephemeral: true });
-            });
-            return;
-        }
-
-        // gettools
-        if (commandName === 'gettools') {
-            const target = interaction.options.getUser('target');
-            log(`[Command] ${user.tag} → /gettools ${target.tag}`);
-            db.all(`SELECT tool,tier,rarity FROM tools WHERE user_id=?`, [target.id], (e, rows) => {
-                if (e) { error('[gettools]', e.message); return interaction.reply({ content: '❌ Error.', ephemeral: true }); }
-                if (!rows.length) return interaction.reply({ content: `${target.username} has no tools.`, ephemeral: true });
-                const list = rows.map(r => `• ${r.tool}: T${r.tier} ${r.rarity}`).join('\n');
-                return interaction.reply({ embeds: [new EmbedBuilder().setTitle(`${target.username}'s Tools`).setDescription(list).setColor(0x00AEFF)], ephemeral: true });
-            });
-            return;
         }
 
         // removetool
         if (commandName === 'removetool') {
-            const tool = interaction.options.getString('tool');
-            log(`[Command] ${user.tag} → /removetool ${tool}`);
-            await new Promise((res, rej) => {
-                db.run(`DELETE FROM tools WHERE user_id=? AND tool=?`, [user.id, tool], err => err ? rej(err) : res());
-            });
-            log(`[DB] Removed tool ${tool} for ${user.tag}`);
+            const tool = options.getString('tool');
+            log(`[Cmd] ${user.tag} → /removetool ${tool}`);
+            await new Promise((r, j) => db.run(
+                `DELETE FROM tools WHERE user_id=? AND tool=?`,
+                [user.id, tool], e => e ? j(e) : r()
+            ));
+            log(`[DB] Removed tool ${tool}`);
             await updateAssignmentEmbed(guild);
             return interaction.reply({ content: `✅ Removed ${tool}.`, ephemeral: true });
         }
 
+        // setarmor
+        if (commandName === 'setarmor') {
+            const material = options.getString('material');
+            const piece = options.getString('piece');
+            const tier = parseInt(options.getString('tier'), 10);
+            log(`[Cmd] ${user.tag} → /setarmor ${material} ${piece} T${tier}`);
+            const valid = validRaritiesForTier(tier);
+            const menu = new StringSelectMenuBuilder()
+                .setCustomId(`armor:${material}:${piece}:${tier}`)
+                .setPlaceholder('Rarity...')
+                .addOptions(valid.map(r => ({ label: `${r} T${tier}`, value: r })));
+            const embed = new EmbedBuilder().setTitle(`Choose rarity for ${material} ${piece} T${tier}`).setColor(0xFFD700);
+            return interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
+        }
+
+        // removearmor
+        if (commandName === 'removearmor') {
+            const material = options.getString('material');
+            const piece = options.getString('piece');
+            log(`[Cmd] ${user.tag} → /removearmor ${material} ${piece}`);
+            await new Promise((r, j) => db.run(
+                `DELETE FROM armor WHERE user_id=? AND material=? AND piece=?`,
+                [user.id, material, piece], e => e ? j(e) : r()
+            ));
+            log(`[DB] Removed armor ${material} ${piece}`);
+            await updateAssignmentEmbed(guild);
+            return interaction.reply({ content: `✅ Removed ${material} ${piece}.`, ephemeral: true });
+        }
+
         // topprofession
         if (commandName === 'topprofession') {
-            const prof = interaction.options.getString('profession');
-            log(`[Command] ${user.tag} → /topprofession ${prof}`);
-            const rows = await new Promise((res, rej) => {
-                db.all(`SELECT user_id FROM assignments WHERE profession=?`, [prof], (e, rs) => e ? rej(e) : res(rs));
+            const prof = options.getString('profession');
+            log(`[Cmd] ${user.tag} → /topprofession ${prof}`);
+            await guild.members.fetch();
+            let top = null, lvl = -1;
+            guild.members.cache.forEach(m => {
+                const role = m.roles.cache
+                    .filter(r => r.name.startsWith(`${prof} `))
+                    .sort((a, b) => parseInt(b.name.split(' ')[1]) - parseInt(a.name.split(' ')[1]))
+                    .first();
+                if (role) {
+                    const v = parseInt(role.name.split(' ')[1], 10);
+                    if (v > lvl) { lvl = v; top = m; }
+                }
             });
-            let topUid = null, topLvl = -1;
-            for (const { user_id: uid } of rows) {
-                const mem = await guild.members.fetch(uid).catch(() => null);
-                if (!mem) continue;
-                const role = mem.roles.cache.find(r => r.name.startsWith(`${prof} `));
-                if (!role) continue;
-                const lvl = parseInt(role.name.split(' ')[1], 10);
-                if (lvl > topLvl) { topLvl = lvl; topUid = uid; }
-            }
-            if (!topUid) return interaction.reply({ content: `No one assigned to ${prof}.`, ephemeral: true });
-            return interaction.reply({ content: `🏆 Top ${prof}: <@${topUid}> – Level ${topLvl}` });
+            if (!top) return interaction.reply({ content: `No one has ${prof}`, ephemeral: true });
+            return interaction.reply({ content: `🏆 Top ${prof}: ${top} – Level ${lvl}` });
         }
+
+        // info
+        if (commandName === 'info') {
+            const target = options.getUser('target');
+            const uid = target.id;
+            const avatar = target.displayAvatarURL({ dynamic: true });
+
+            // Fetch data
+            const assignMap = await fetchAllAssignments();
+            const userProfs = assignMap[uid] || [];
+            const mainProf = userProfs[0] || 'None';
+            const otherProfs = userProfs.slice(1);
+
+            const toolMap = await fetchAllTools();
+            const tmap = toolMap[uid] || {};
+            const toolList = Object.entries(tmap)
+                .map(([tool, { tier, rarity }]) => `${rarity} T${tier} ${tool}`);
+
+            const armorMap = await fetchAllArmor();
+            const amap = armorMap[uid] || {};
+
+            // Group & sort armor by material and piece order
+            const armorByMat = { Leather: [], Cloth: [], Plate: [] };
+            Object.values(amap).forEach(a => armorByMat[a.material].push(a));
+            for (const mat of materials) {
+                armorByMat[mat].sort((a, b) =>
+                    pieces.indexOf(a.piece) - pieces.indexOf(b.piece)
+                );
+            }
+
+            // Prepare columns
+            const leatherLines = armorByMat.Leather.length
+                ? armorByMat.Leather.map(a => `**${a.piece}:** ${a.rarity} T${a.tier}`).join('\n')
+                : 'None';
+            const clothLines = armorByMat.Cloth.length
+                ? armorByMat.Cloth.map(a => `**${a.piece}:** ${a.rarity} T${a.tier}`).join('\n')
+                : 'None';
+            const plateLines = armorByMat.Plate.length
+                ? armorByMat.Plate.map(a => `**${a.piece}:** ${a.rarity} T${a.tier}`).join('\n')
+                : 'None';
+
+            // Build embed
+            const embed = new EmbedBuilder()
+                .setTitle(`${target.username}'s Profile`)
+                .setThumbnail(avatar)
+                .addFields(
+                    { name: 'Main Profession', value: mainProf, inline: true },
+                    { name: 'Other Professions', value: otherProfs.length ? otherProfs.join(', ') : 'None', inline: true },
+                    { name: 'Tools', value: toolList.length ? toolList.join('\n') : 'None' },
+                    { name: '🛡️ Leather Armor', value: leatherLines, inline: true },
+                    { name: '🛡️ Cloth Armor', value: clothLines, inline: true },
+                    { name: '🛡️ Plate Armor', value: plateLines, inline: true }
+                )
+                .setColor(0x00AEFF);
+
+            return interaction.reply({ embeds: [embed] });
+        }
+
     }
 
     // StringSelectMenu handlers
     if (interaction.isStringSelectMenu()) {
+        if (interaction.customId.startsWith('tool:') || interaction.customId.startsWith('armor:')) {
+            return handleSelectRarity(interaction);
+        }
         if (interaction.customId === 'select_profession') {
             const prof = interaction.values[0];
-            log(`[SelectMenu] ${user.tag} → profession ${prof}`);
+            log(`[Select] ${interaction.user.tag} → profession ${prof}`);
             const embed = new EmbedBuilder()
                 .setTitle(`Profession: ${prof}`)
-                .setDescription(`Choose your level:`)
                 .setColor(0xFFD700);
-            const levelMenu = new StringSelectMenuBuilder()
+            const menu = new StringSelectMenuBuilder()
                 .setCustomId(`select_level_${prof}`)
-                .setPlaceholder('Select level…')
+                .setPlaceholder('Level...')
                 .addOptions(levels.map(l => ({ label: `Level ${l}`, value: l })));
-            return interaction.update({ embeds: [embed], components: [new ActionRowBuilder().addComponents(levelMenu)] });
+            return interaction.update({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] });
         }
         if (interaction.customId.startsWith('select_level_')) {
             const prof = interaction.customId.replace('select_level_', '');
             const lvl = interaction.values[0];
-            log(`[SelectMenu] ${user.tag} → level ${lvl} for ${prof}`);
+            log(`[Select] ${interaction.user.tag} → level ${lvl} for ${prof}`);
             const roleName = `${prof} ${lvl}`;
-            const mem = await interaction.guild.members.fetch(user.id);
+            const mem = await interaction.guild.members.fetch(interaction.user.id);
             const old = mem.roles.cache.find(r => r.name.startsWith(`${prof} `));
             if (old) { await mem.roles.remove(old); log(`[Role] Removed ${old.name}`); }
             let role = interaction.guild.roles.cache.find(r => r.name === roleName);
             if (!role) {
-                role = await interaction.guild.roles.create({ name: roleName, color: 0x3498db, hoist: true, mentionable: true, reason: `${prof} ${lvl}` });
+                role = await interaction.guild.roles.create({
+                    name: roleName,
+                    color: 0x3498db,
+                    hoist: true,
+                    mentionable: true,
+                    reason: `Created for ${prof} ${lvl}`
+                });
                 log(`[Role] Created ${roleName}`);
             }
             await mem.roles.add(role);
             log(`[Role] Assigned ${roleName}`);
             await updateAssignmentEmbed(interaction.guild);
             return interaction.update({ content: `✅ Assigned ${roleName}`, embeds: [], components: [] });
-        }
-        if (interaction.customId.startsWith('select_rarity:')) {
-            log(`[SelectMenu] ${user.tag} → selected rarity`);
-            return handleSelectRarity(interaction);
         }
     }
 });
