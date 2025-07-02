@@ -70,7 +70,7 @@ const professions = ["Carpentry", "Farming", "Fishing", "Foraging", "Forestry", 
 const levels = ["10", "20", "30", "40", "50", "60", "70", "80", "90", "100"];
 const tools = ["Saw", "Hoe", "Fishing Rod", "Machete", "Axe", "Hunting Bow", "Knife", "Chisel", "Pickaxe", "Quill", "Hammer", "Shears"];
 const materials = ["Leather", "Cloth", "Plate"];
-const pieces = ["Head", "Chestplate", "Leggings", "Boots", "Gloves"];
+const pieces = ["Head", "Chestplate", "Leggings", "Boots", "Gloves", "Belt"]; // Added Belt
 const tiers = Array.from({ length: 10 }, (_, i) => (i + 1).toString());
 const rarities = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"];
 
@@ -279,9 +279,7 @@ client.once('ready', async () => {
             .setDescription('Unassign yourself from a profession')
             .addStringOption(o => o.setName('profession').setDescription('Profession').setRequired(true)
                 .addChoices(...professions.map(p => ({ name: p, value: p })))),
-        new SlashCommandBuilder()
-            .setName('selectprofession')
-            .setDescription('Choose a profession'),
+        new SlashCommandBuilder().setName('selectprofession').setDescription('Choose a profession'),
         new SlashCommandBuilder()
             .setName('settimer')
             .setDescription('Set a timer')
@@ -305,7 +303,7 @@ client.once('ready', async () => {
             .setDescription('Assign an armor piece')
             .addStringOption(o => o.setName('material').setDescription('Leather|Cloth|Plate').setRequired(true)
                 .addChoices(...materials.map(m => ({ name: m, value: m }))))
-            .addStringOption(o => o.setName('piece').setDescription('Head|Chestplate|Leggings|Boots|Gloves').setRequired(true)
+            .addStringOption(o => o.setName('piece').setDescription('Head|Chestplate|Leggings|Boots|Gloves|Belt').setRequired(true)
                 .addChoices(...pieces.map(p => ({ name: p, value: p }))))
             .addStringOption(o => o.setName('tier').setDescription('Tier').setRequired(true)
                 .addChoices(...tiers.map(t => ({ name: `T${t}`, value: t })))),
@@ -315,7 +313,7 @@ client.once('ready', async () => {
             .setDescription('Remove an armor piece')
             .addStringOption(o => o.setName('material').setDescription('Leather|Cloth|Plate').setRequired(true)
                 .addChoices(...materials.map(m => ({ name: m, value: m }))))
-            .addStringOption(o => o.setName('piece').setDescription('Head|Chestplate|Leggings|Boots|Gloves').setRequired(true)
+            .addStringOption(o => o.setName('piece').setDescription('Head|Chestplate|Leggings|Boots|Gloves|Belt').setRequired(true)
                 .addChoices(...pieces.map(p => ({ name: p, value: p })))),
 
         new SlashCommandBuilder()
@@ -323,7 +321,6 @@ client.once('ready', async () => {
             .setDescription('Show top member of a profession')
             .addStringOption(o => o.setName('profession').setDescription('Profession').setRequired(true)
                 .addChoices(...professions.map(p => ({ name: p, value: p })))),
-
         new SlashCommandBuilder()
             .setName('info')
             .setDescription('Show full profile info for a user')
@@ -347,15 +344,11 @@ client.on(Events.InteractionCreate, async interaction => {
         if (commandName === 'setupassignments') {
             log(`[Cmd] ${user.tag} → /setupassignments`);
             const ch = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
-            const init = new EmbedBuilder()
-                .setTitle('📋 Assigned Professions')
-                .setDescription('*Initializing…*')
-                .setColor(0x00AEFF);
+            const init = new EmbedBuilder().setTitle('📋 Assigned Professions').setDescription('*Initializing…*').setColor(0x00AEFF);
             const msg = await ch.send({ embeds: [init] });
             await setMeta('board_message_id', msg.id);
             return interaction.reply({ content: '✅ Board initialized.', ephemeral: true });
         }
-
         // assignmyselfto
         if (commandName === 'assignmyselfto') {
             const prof = options.getString('profession');
@@ -369,7 +362,6 @@ client.on(Events.InteractionCreate, async interaction => {
             await updateAssignmentEmbed(guild);
             return interaction.reply({ content: `✅ Assigned to **${prof}**.`, ephemeral: true });
         }
-
         // unassignmyselffrom
         if (commandName === 'unassignmyselffrom') {
             const prof = options.getString('profession');
@@ -383,7 +375,6 @@ client.on(Events.InteractionCreate, async interaction => {
             await updateAssignmentEmbed(guild);
             return interaction.reply({ content: `✅ Unassigned from **${prof}**.`, ephemeral: true });
         }
-
         // settimer
         if (commandName === 'settimer') {
             const minutes = options.getInteger('minutes');
@@ -396,7 +387,6 @@ client.on(Events.InteractionCreate, async interaction => {
             }, minutes * 60000);
             return;
         }
-
         // selectprofession
         if (commandName === 'selectprofession') {
             log(`[Cmd] ${user.tag} → /selectprofession`);
@@ -405,7 +395,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 .addOptions(professions.map(p => ({ label: p, value: p })));
             return interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
         }
-
         // settool
         if (commandName === 'settool') {
             const tool = options.getString('tool');
@@ -419,7 +408,6 @@ client.on(Events.InteractionCreate, async interaction => {
             const embed = new EmbedBuilder().setTitle(`Choose rarity for ${tool} T${tier}`).setColor(0xFFD700);
             return interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
         }
-
         // removetool
         if (commandName === 'removetool') {
             const tool = options.getString('tool');
@@ -432,7 +420,6 @@ client.on(Events.InteractionCreate, async interaction => {
             await updateAssignmentEmbed(guild);
             return interaction.reply({ content: `✅ Removed ${tool}.`, ephemeral: true });
         }
-
         // setarmor
         if (commandName === 'setarmor') {
             const material = options.getString('material');
@@ -447,7 +434,6 @@ client.on(Events.InteractionCreate, async interaction => {
             const embed = new EmbedBuilder().setTitle(`Choose rarity for ${material} ${piece} T${tier}`).setColor(0xFFD700);
             return interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
         }
-
         // removearmor
         if (commandName === 'removearmor') {
             const material = options.getString('material');
@@ -461,7 +447,6 @@ client.on(Events.InteractionCreate, async interaction => {
             await updateAssignmentEmbed(guild);
             return interaction.reply({ content: `✅ Removed ${material} ${piece}.`, ephemeral: true });
         }
-
         // topprofession
         if (commandName === 'topprofession') {
             const prof = options.getString('profession');
@@ -471,7 +456,7 @@ client.on(Events.InteractionCreate, async interaction => {
             guild.members.cache.forEach(m => {
                 const role = m.roles.cache
                     .filter(r => r.name.startsWith(`${prof} `))
-                    .sort((a, b) => parseInt(b.name.split(' ')[1]) - parseInt(a.name.split(' ')[1]))
+                    .sort((a, b) => parseInt(b.name.split(' ')[1], 10) - parseInt(a.name.split(' ')[1], 10))
                     .first();
                 if (role) {
                     const v = parseInt(role.name.split(' ')[1], 10);
@@ -481,14 +466,12 @@ client.on(Events.InteractionCreate, async interaction => {
             if (!top) return interaction.reply({ content: `No one has ${prof}`, ephemeral: true });
             return interaction.reply({ content: `🏆 Top ${prof}: ${top} – Level ${lvl}` });
         }
-
         // info
         if (commandName === 'info') {
             const target = options.getUser('target');
             const uid = target.id;
             const avatar = target.displayAvatarURL({ dynamic: true });
 
-            // Fetch data
             const assignMap = await fetchAllAssignments();
             const userProfs = assignMap[uid] || [];
             const mainProf = userProfs[0] || 'None';
@@ -502,7 +485,6 @@ client.on(Events.InteractionCreate, async interaction => {
             const armorMap = await fetchAllArmor();
             const amap = armorMap[uid] || {};
 
-            // Group & sort armor by material and piece order
             const armorByMat = { Leather: [], Cloth: [], Plate: [] };
             Object.values(amap).forEach(a => armorByMat[a.material].push(a));
             for (const mat of materials) {
@@ -511,7 +493,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 );
             }
 
-            // Prepare columns
             const leatherLines = armorByMat.Leather.length
                 ? armorByMat.Leather.map(a => `**${a.piece}:** ${a.rarity} T${a.tier}`).join('\n')
                 : 'None';
@@ -522,7 +503,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 ? armorByMat.Plate.map(a => `**${a.piece}:** ${a.rarity} T${a.tier}`).join('\n')
                 : 'None';
 
-            // Build embed
             const embed = new EmbedBuilder()
                 .setTitle(`${target.username}'s Profile`)
                 .setThumbnail(avatar)
@@ -534,11 +514,11 @@ client.on(Events.InteractionCreate, async interaction => {
                     { name: '🛡️ Cloth Armor', value: clothLines, inline: true },
                     { name: '🛡️ Plate Armor', value: plateLines, inline: true }
                 )
-                .setColor(0x00AEFF);
+                .setColor(0x00AEFF)
+                .setTimestamp();
 
             return interaction.reply({ embeds: [embed] });
         }
-
     }
 
     // StringSelectMenu handlers
@@ -549,9 +529,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (interaction.customId === 'select_profession') {
             const prof = interaction.values[0];
             log(`[Select] ${interaction.user.tag} → profession ${prof}`);
-            const embed = new EmbedBuilder()
-                .setTitle(`Profession: ${prof}`)
-                .setColor(0xFFD700);
+            const embed = new EmbedBuilder().setTitle(`Profession: ${prof}`).setColor(0xFFD700);
             const menu = new StringSelectMenuBuilder()
                 .setCustomId(`select_level_${prof}`)
                 .setPlaceholder('Level...')
