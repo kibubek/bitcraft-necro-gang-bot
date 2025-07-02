@@ -210,7 +210,7 @@ async function updateAssignmentEmbed(guild) {
     }
 }
 
-// Handle the rarity-select menu for /settool
+// Handle the rarity-select menu for /settool (no roles)
 async function handleSelectRarity(interaction) {
     const [, toolKey, tierStr] = interaction.customId.split(':');
     const tool = toolKey.replace(/_/g, ' ');
@@ -218,7 +218,7 @@ async function handleSelectRarity(interaction) {
     const rarity = interaction.values[0];
     const uid = interaction.user.id;
 
-    log(`[SetTool] User ${interaction.user.tag} chose ${tool} T${tier} ${rarity}`);
+    log(`[SetTool] ${interaction.user.tag} → ${tool} T${tier} ${rarity}`);
 
     // Upsert into tools table
     await new Promise((res, rej) => {
@@ -232,30 +232,7 @@ async function handleSelectRarity(interaction) {
             e => e ? rej(e) : res()
         );
     });
-    log(`[DB] Upserted tool ${tool} for user ${uid}`);
-
-    // Assign the role "Tool T# Rarity"
-    const roleName = `${tool} T${tier} ${rarity}`;
-    let role = interaction.guild.roles.cache.find(r => r.name === roleName);
-    if (!role) {
-        role = await interaction.guild.roles.create({
-            name: roleName,
-            color: 0x779ECB,
-            hoist: false,
-            mentionable: true,
-            reason: `Tool slot for ${tool}`
-        });
-        log(`[Role] Created role ${roleName}`);
-    }
-    const member = await interaction.guild.members.fetch(uid);
-    member.roles.cache
-        .filter(r => r.name.startsWith(`${tool} T`))
-        .forEach(r => {
-            member.roles.remove(r);
-            log(`[Role] Removed old role ${r.name} from user ${uid}`);
-        });
-    await member.roles.add(role);
-    log(`[Role] Assigned role ${roleName} to user ${uid}`);
+    log(`[DB] Saved ${tool} for ${interaction.user.tag}`);
 
     // Refresh the assignments board
     await updateAssignmentEmbed(interaction.guild);
@@ -372,6 +349,7 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isChatInputCommand()) {
         // setupassignments
         if (commandName === 'setupassignments') {
+            log(`[Command] ${user.tag} → /setupassignments`);
             const ch = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
             const init = new EmbedBuilder()
                 .setTitle('📋 Assigned Professions')
@@ -379,14 +357,13 @@ client.on(Events.InteractionCreate, async interaction => {
                 .setColor(0x00AEFF);
             const msg = await ch.send({ embeds: [init] });
             await setMeta('board_message_id', msg.id);
-            log(`[Command] ${user.tag} ran /setupassignments`);
             return interaction.reply({ content: '✅ Assignment board initialized.', ephemeral: true });
         }
 
         // assignmyselfto
         if (commandName === 'assignmyselfto') {
             const prof = interaction.options.getString('profession');
-            log(`[Command] ${user.tag} ran /assignmyselfto ${prof}`);
+            log(`[Command] ${user.tag} → /assignmyselfto ${prof}`);
             const role = guild.roles.cache.find(r => r.name === prof);
             if (!role) {
                 warn(`[assignmyselfto] Role ${prof} not found`);
@@ -400,6 +377,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 );
             });
             await member.roles.add(role);
+            log(`[Role] Assigned profession ${prof} to ${user.tag}`);
             await updateAssignmentEmbed(guild);
             return interaction.reply({ content: `✅ Assigned to **${prof}**.`, ephemeral: true });
         }
@@ -407,7 +385,7 @@ client.on(Events.InteractionCreate, async interaction => {
         // unassignmyselffrom
         if (commandName === 'unassignmyselffrom') {
             const prof = interaction.options.getString('profession');
-            log(`[Command] ${user.tag} ran /unassignmyselffrom ${prof}`);
+            log(`[Command] ${user.tag} → /unassignmyselffrom ${prof}`);
             await new Promise((res, rej) => {
                 db.run(
                     `DELETE FROM assignments WHERE user_id=? AND profession=?`,
@@ -418,7 +396,7 @@ client.on(Events.InteractionCreate, async interaction => {
             const role = guild.roles.cache.find(r => r.name === prof);
             if (role) {
                 await member.roles.remove(role);
-                log(`[Role] Removed role ${prof} from ${user.tag}`);
+                log(`[Role] Removed profession ${prof} from ${user.tag}`);
             }
             await updateAssignmentEmbed(guild);
             return interaction.reply({ content: `✅ Unassigned from **${prof}**.`, ephemeral: true });
@@ -428,21 +406,21 @@ client.on(Events.InteractionCreate, async interaction => {
         if (commandName === 'settimer') {
             const minutes = interaction.options.getInteger('minutes');
             const note = interaction.options.getString('note')?.trim() || '⏰ Your timer is up!';
-            log(`[Command] ${user.tag} ran /settimer ${minutes}min – Note: "${note}"`);
+            log(`[Command] ${user.tag} → /settimer ${minutes}min – "${note}"`);
             await interaction.reply({
                 content: `⏳ Timer set for ${minutes} minute(s).\nI’ll remind you with: "${note}"`,
                 ephemeral: true
             });
             setTimeout(() => {
                 interaction.channel.send({ content: `🔔 <@${user.id}> ${note}` });
-                log(`[Timer] Sent reminder to ${user.tag}`);
+                log(`[Timer] Reminder sent to ${user.tag}`);
             }, minutes * 60 * 1000);
             return;
         }
 
         // selectprofession
         if (commandName === 'selectprofession') {
-            log(`[Command] ${user.tag} ran /selectprofession`);
+            log(`[Command] ${user.tag} → /selectprofession`);
             const embed = new EmbedBuilder()
                 .setTitle('Choose Your Profession')
                 .setDescription('Select your profession below')
@@ -458,7 +436,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (commandName === 'settool') {
             const tool = interaction.options.getString('tool');
             const tier = parseInt(interaction.options.getString('tier'), 10);
-            log(`[Command] ${user.tag} ran /settool ${tool} T${tier}`);
+            log(`[Command] ${user.tag} → /settool ${tool} T${tier}`);
             const allowed = rarities.filter((_, i) => tier >= i + 1);
             const toolKey = tool.replace(/\s+/g, '_');
             const menu = new StringSelectMenuBuilder()
@@ -474,7 +452,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         // getmytools
         if (commandName === 'getmytools') {
-            log(`[Command] ${user.tag} ran /getmytools`);
+            log(`[Command] ${user.tag} → /getmytools`);
             db.all(
                 `SELECT tool, tier, rarity FROM tools WHERE user_id = ?`,
                 [user.id],
@@ -501,7 +479,7 @@ client.on(Events.InteractionCreate, async interaction => {
         // gettools
         if (commandName === 'gettools') {
             const target = interaction.options.getUser('target');
-            log(`[Command] ${user.tag} ran /gettools for ${target.tag}`);
+            log(`[Command] ${user.tag} → /gettools ${target.tag}`);
             db.all(
                 `SELECT tool, tier, rarity FROM tools WHERE user_id = ?`,
                 [target.id],
@@ -528,9 +506,8 @@ client.on(Events.InteractionCreate, async interaction => {
         // removetool
         if (commandName === 'removetool') {
             const tool = interaction.options.getString('tool');
-            log(`[Command] ${user.tag} ran /removetool ${tool}`);
+            log(`[Command] ${user.tag} → /removetool ${tool}`);
             const uid = user.id;
-            // remove from DB
             await new Promise((res, rej) => {
                 db.run(
                     `DELETE FROM tools WHERE user_id = ? AND tool = ?`,
@@ -538,16 +515,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     err => err ? rej(err) : res()
                 );
             });
-            log(`[DB] Removed tool ${tool} for user ${uid}`);
-            // remove roles
-            const mem = await guild.members.fetch(uid);
-            mem.roles.cache
-                .filter(r => r.name.startsWith(`${tool} T`))
-                .forEach(r => {
-                    mem.roles.remove(r);
-                    log(`[Role] Removed role ${r.name} from user ${uid}`);
-                });
-            // refresh board
+            log(`[DB] Removed tool ${tool} for ${user.tag}`);
             await updateAssignmentEmbed(guild);
             return interaction.reply({
                 content: `✅ Removed **${tool}** from your tools.`,
@@ -556,11 +524,11 @@ client.on(Events.InteractionCreate, async interaction => {
         }
     }
 
-    // StringSelectMenu handlers
+    // SelectMenu handlers
     if (interaction.isStringSelectMenu()) {
         if (interaction.customId === 'select_profession') {
             const prof = interaction.values[0];
-            log(`[SelectMenu] ${user.tag} selected profession ${prof}`);
+            log(`[SelectMenu] ${user.tag} → profession ${prof}`);
             const embed = new EmbedBuilder()
                 .setTitle(`Profession: ${prof}`)
                 .setDescription(`Now choose your level for **${prof}**`)
@@ -575,9 +543,9 @@ client.on(Events.InteractionCreate, async interaction => {
         if (interaction.customId.startsWith('select_level_')) {
             const prof = interaction.customId.replace('select_level_', '');
             const lvl = interaction.values[0];
-            log(`[SelectMenu] ${user.tag} selected level ${lvl} for profession ${prof}`);
+            log(`[SelectMenu] ${user.tag} → level ${lvl} for profession ${prof}`);
             const roleName = `${prof} ${lvl}`;
-            const mem = await interaction.guild.members.fetch(interaction.user.id);
+            const mem = await interaction.guild.members.fetch(user.id);
 
             const oldRole = mem.roles.cache.find(r => r.name.startsWith(`${prof} `));
             if (oldRole) {
@@ -604,7 +572,7 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         if (interaction.customId.startsWith('select_rarity:')) {
-            log(`[SelectMenu] ${user.tag} selected a rarity`);
+            log(`[SelectMenu] ${user.tag} → selected rarity`);
             return handleSelectRarity(interaction);
         }
     }
