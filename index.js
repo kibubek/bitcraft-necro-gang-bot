@@ -76,19 +76,10 @@ const rarities = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"];
 
 // profession → matching tool
 const professionToolMap = {
-    Carpentry: "Saw",
-    Farming: "Hoe",
-    Fishing: "Fishing Rod",
-    Foraging: "Machete",
-    Forestry: "Axe",
-    Hunting: "Hunting Bow",
-    Leatherworking: "Knife",
-    Masonry: "Chisel",
-    Mining: "Pickaxe",
-    Scholar: "Quill",
-    Smithing: "Hammer",
-    Tailoring: "Shears",
-    Cooking: null
+    Carpentry: "Saw", Farming: "Hoe", Fishing: "Fishing Rod",
+    Foraging: "Machete", Forestry: "Axe", Hunting: "Hunting Bow",
+    Leatherworking: "Knife", Masonry: "Chisel", Mining: "Pickaxe",
+    Scholar: "Quill", Smithing: "Hammer", Tailoring: "Shears", Cooking: null
 };
 
 // SQLite helpers
@@ -157,7 +148,7 @@ function setMeta(key, value) {
     });
 }
 
-// Rebuild the “Assigned Professions” board
+// Rebuild the “Assigned Professions” board with pagination
 async function updateAssignmentEmbed(guild) {
     if (DEV) {
         log('[DEV] Skipping embed update');
@@ -172,8 +163,7 @@ async function updateAssignmentEmbed(guild) {
 
         const channel = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
         const storedId = await getMeta('board_message_id');
-        let message;
-
+        let message = null;
         if (storedId) {
             try {
                 const f = await channel.messages.fetch(storedId);
@@ -181,11 +171,10 @@ async function updateAssignmentEmbed(guild) {
                     message = f;
                     log(`[Embed] Fetched ${storedId}`);
                 }
-            } catch (err) {
+            } catch {
                 warn('[Embed] could not fetch; will recreate');
             }
         }
-
         if (!message) {
             const init = new EmbedBuilder()
                 .setTitle('📋 Assigned Professions')
@@ -197,13 +186,12 @@ async function updateAssignmentEmbed(guild) {
             log(`[Embed] Created ${newMsg.id}`);
         }
 
+        // Build sections
         const sections = professions.map(prof => {
             const users = Object.entries(assignMap)
                 .filter(([, ps]) => ps.includes(prof))
                 .map(([uid]) => uid);
-            if (!users.length) {
-                return `### ${prof}\n*No one assigned*`;
-            }
+            if (!users.length) return `### ${prof}\n*No one assigned*`;
 
             const toolName = professionToolMap[prof];
             const lines = users.map(uid => {
@@ -230,16 +218,33 @@ async function updateAssignmentEmbed(guild) {
             return `### ${prof}\n${lines.join('\n')}`;
         });
 
-        const embed = new EmbedBuilder()
+        // Paginate into multiple embeds
+        const embeds = [];
+        let current = new EmbedBuilder()
             .setTitle('📋 Assigned Professions')
-            .setDescription(sections.join('\n\n'))
-            .setColor(0x00AEFF)
-            .setTimestamp();
+            .setColor(0x00AEFF);
+        let buffer = '';
 
-        await message.edit({ embeds: [embed] });
-        log('[Embed] Board updated');
+        for (const sec of sections) {
+            // +2 for newline spacing
+            if (buffer.length + sec.length + 2 > 4000) {
+                current.setDescription(buffer.trim());
+                embeds.push(current);
+                current = new EmbedBuilder()
+                    .setTitle('📋 Assigned Professions (cont’d)')
+                    .setColor(0x00AEFF);
+                buffer = '';
+            }
+            buffer += sec + '\n\n';
+        }
+        if (buffer.length) {
+            current.setDescription(buffer.trim());
+            embeds.push(current);
+        }
+
+        await message.edit({ embeds });
+        log('[Embed] Board updated with', embeds.length, 'pages');
     } catch (err) {
-        // Enhanced error logging:
         error('[Embed] update error:', err);
     }
 }
@@ -266,7 +271,6 @@ async function handleSelectRarity(interaction) {
                       rarity=excluded.rarity
             `, [uid, tool, tier, rarity], e => e ? rej(e) : res());
         });
-
     } else if (type === 'armor') {
         const material = k1;
         const piece = k2;
@@ -478,7 +482,9 @@ client.on(Events.InteractionCreate, async interaction => {
         // selectprofession
         if (commandName === 'selectprofession') {
             log(`[Cmd] ${user.tag} → /selectprofession`);
-            const embed = new EmbedBuilder().setTitle('Choose a profession').setColor(0x00AEFF);
+            const embed = new EmbedBuilder()
+                .setTitle('Choose a profession')
+                .setColor(0x00AEFF);
             const menu = new StringSelectMenuBuilder()
                 .setCustomId('select_profession')
                 .setPlaceholder('Profession...')
@@ -498,7 +504,7 @@ client.on(Events.InteractionCreate, async interaction => {
             const valid = validRaritiesForTier(tier);
             const menu = new StringSelectMenuBuilder()
                 .setCustomId(`tool:${tool.replace(/\s+/g, '_')}:${tier}`)
-                .setPlaceholder('Rarity...')
+                .setPlaceholder('Rarity…')
                 .addOptions(valid.map(r => ({ label: `${r} T${tier}`, value: r })));
             const embed = new EmbedBuilder()
                 .setTitle(`Choose rarity for ${tool} T${tier}`)
@@ -519,7 +525,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 [user.id, tool],
                 e => e ? j(e) : r()
             ));
-            log(`[DB] Removed tool ${tool}`);
             await updateAssignmentEmbed(guild);
             return interaction.reply({ content: `✅ Removed ${tool}.`, ephemeral: true });
         }
@@ -533,7 +538,7 @@ client.on(Events.InteractionCreate, async interaction => {
             const valid = validRaritiesForTier(tier);
             const menu = new StringSelectMenuBuilder()
                 .setCustomId(`armor:${material}:${piece}:${tier}`)
-                .setPlaceholder('Rarity...')
+                .setPlaceholder('Rarity…')
                 .addOptions(valid.map(r => ({ label: `${r} T${tier}`, value: r })));
             const embed = new EmbedBuilder()
                 .setTitle(`Choose rarity for ${material} ${piece} T${tier}`)
@@ -555,7 +560,6 @@ client.on(Events.InteractionCreate, async interaction => {
                 [user.id, material, piece],
                 e => e ? j(e) : r()
             ));
-            log(`[DB] Removed armor ${material} ${piece}`);
             await updateAssignmentEmbed(guild);
             return interaction.reply({ content: `✅ Removed ${material} ${piece}.`, ephemeral: true });
         }
@@ -570,7 +574,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 const role = m.roles.cache
                     .filter(r => r.name.startsWith(`${prof} `))
                     .sort((a, b) =>
-                        parseInt(b.name.split(' ')[1], 10) - parseInt(a.name.split(' ')[1], 10)
+                        parseInt(b.name.split(' ')[1], 10) -
+                        parseInt(a.name.split(' ')[1], 10)
                     )
                     .first();
                 if (role) {
@@ -600,15 +605,11 @@ client.on(Events.InteractionCreate, async interaction => {
 
             const armorMap = await fetchAllArmor();
             const amap = armorMap[uid] || {};
-
             const armorByMat = { Leather: [], Cloth: [], Plate: [] };
             Object.values(amap).forEach(a => armorByMat[a.material].push(a));
             for (const mat of materials) {
-                armorByMat[mat].sort((a, b) =>
-                    pieces.indexOf(a.piece) - pieces.indexOf(b.piece)
-                );
+                armorByMat[mat].sort((a, b) => pieces.indexOf(a.piece) - pieces.indexOf(b.piece));
             }
-
             const leatherLines = armorByMat.Leather.length
                 ? armorByMat.Leather.map(a => `**${a.piece}:** ${a.rarity} T${a.tier}`).join('\n')
                 : 'None';
@@ -645,7 +646,9 @@ client.on(Events.InteractionCreate, async interaction => {
         if (interaction.customId === 'select_profession') {
             const prof = interaction.values[0];
             log(`[Select] ${interaction.user.tag} → profession ${prof}`);
-            const embed = new EmbedBuilder().setTitle(`Profession: ${prof}`).setColor(0xFFD700);
+            const embed = new EmbedBuilder()
+                .setTitle(`Profession: ${prof}`)
+                .setColor(0xFFD700);
             const menu = new StringSelectMenuBuilder()
                 .setCustomId(`select_level_${prof}`)
                 .setPlaceholder('Level...')
@@ -657,27 +660,23 @@ client.on(Events.InteractionCreate, async interaction => {
             const lvl = interaction.values[0];
             log(`[Select] ${interaction.user.tag} → level ${lvl} for ${prof}`);
             const mem = await interaction.guild.members.fetch(interaction.user.id);
-            const roleName = `${prof} ${lvl}`;
             const old = mem.roles.cache.find(r => r.name.startsWith(`${prof} `));
-            if (old) {
-                await mem.roles.remove(old);
-                log(`[Role] Removed ${old.name}`);
-            }
-            let role = interaction.guild.roles.cache.find(r => r.name === roleName);
+            if (old) { await mem.roles.remove(old); log(`[Role] Removed ${old.name}`); }
+            let role = interaction.guild.roles.cache.find(r => r.name === `${prof} ${lvl}`);
             if (!role) {
                 role = await interaction.guild.roles.create({
-                    name: roleName,
+                    name: `${prof} ${lvl}`,
                     color: 0x3498db,
                     hoist: true,
                     mentionable: true,
-                    reason: `Created for ${prof} ${lvl}`
+                    reason: `Role for ${prof} level ${lvl}`
                 });
-                log(`[Role] Created ${roleName}`);
+                log(`[Role] Created ${role.name}`);
             }
             await mem.roles.add(role);
-            log(`[Role] Assigned ${roleName}`);
+            log(`[Role] Assigned ${role.name}`);
             await updateAssignmentEmbed(interaction.guild);
-            return interaction.update({ content: `✅ Assigned ${roleName}`, embeds: [], components: [] });
+            return interaction.update({ content: `✅ Assigned **${prof} ${lvl}**!`, embeds: [], components: [] });
         }
     }
 });
