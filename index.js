@@ -1,3 +1,4 @@
+// index.js
 require('dotenv').config();
 const {
     Client,
@@ -12,63 +13,71 @@ const {
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
-// Read DEV flag from .env (default false)
+// Import the armor‐board module
+const initArmorBoard = require('./armorBoard');
+
 const DEV = process.env.DEV === 'TRUE';
+const TOKEN = process.env.DISCORD_TOKEN;
+const ASSIGNMENT_CHANNEL_ID = process.env.ASSIGNMENT_CHANNEL_ID;
+const ARMOR_CHANNEL_ID = process.env.ARMOR_CHANNEL_ID;
+const DB_PATH = path.join(__dirname, 'assignments.db');
 
 // Simple timestamped logger
 const log = (...args) => console.log(new Date().toISOString(), ...args);
 const warn = (...args) => console.warn(new Date().toISOString(), ...args);
 const error = (...args) => console.error(new Date().toISOString(), ...args);
 
-const TOKEN = process.env.DISCORD_TOKEN;
-const ASSIGNMENT_CHANNEL_ID = process.env.ASSIGNMENT_CHANNEL_ID;
-const DB_PATH = path.join(__dirname, 'assignments.db');
-
-// Initialize SQLite database
+// Initialize SQLite
 const db = new sqlite3.Database(DB_PATH, err => {
     if (err) return error('[DB]', err);
     log(`✅ Connected to SQLite database. DEV=${DEV}`);
 });
-
 db.serialize(() => {
     db.run(`
-        CREATE TABLE IF NOT EXISTS assignments (
-            user_id    TEXT NOT NULL,
-            profession TEXT NOT NULL,
-            PRIMARY KEY (user_id, profession)
-        )
-    `);
+    CREATE TABLE IF NOT EXISTS assignments (
+      user_id    TEXT NOT NULL,
+      profession TEXT NOT NULL,
+      PRIMARY KEY (user_id, profession)
+    )
+  `);
     db.run(`
-        CREATE TABLE IF NOT EXISTS tools (
-            user_id TEXT NOT NULL,
-            tool    TEXT NOT NULL,
-            tier    INTEGER NOT NULL,
-            rarity  TEXT NOT NULL,
-            PRIMARY KEY (user_id, tool)
-        )
-    `);
+    CREATE TABLE IF NOT EXISTS tools (
+      user_id TEXT NOT NULL,
+      tool    TEXT NOT NULL,
+      tier    INTEGER NOT NULL,
+      rarity  TEXT NOT NULL,
+      PRIMARY KEY (user_id, tool)
+    )
+  `);
     db.run(`
-        CREATE TABLE IF NOT EXISTS armor (
-            user_id  TEXT NOT NULL,
-            material TEXT NOT NULL,
-            piece    TEXT NOT NULL,
-            tier     INTEGER NOT NULL,
-            rarity   TEXT NOT NULL,
-            PRIMARY KEY (user_id, material, piece)
-        )
-    `);
+    CREATE TABLE IF NOT EXISTS armor (
+      user_id  TEXT NOT NULL,
+      material TEXT NOT NULL,
+      piece    TEXT NOT NULL,
+      tier     INTEGER NOT NULL,
+      rarity   TEXT NOT NULL,
+      PRIMARY KEY (user_id, material, piece)
+    )
+  `);
     db.run(`
-        CREATE TABLE IF NOT EXISTS meta (
-            key   TEXT PRIMARY KEY,
-            value TEXT
-        )
-    `);
+    CREATE TABLE IF NOT EXISTS meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT
+    )
+  `);
 });
 
 // Static data
-const professions = ["Carpentry", "Farming", "Fishing", "Foraging", "Forestry", "Hunting", "Leatherworking", "Masonry", "Mining", "Scholar", "Smithing", "Tailoring", "Cooking"];
+const professions = [
+    "Carpentry", "Farming", "Fishing", "Foraging", "Forestry",
+    "Hunting", "Leatherworking", "Masonry", "Mining", "Scholar",
+    "Smithing", "Tailoring", "Cooking"
+];
 const levels = ["10", "20", "30", "40", "50", "60", "70", "80", "90", "100"];
-const tools = ["Saw", "Hoe", "Fishing Rod", "Machete", "Axe", "Hunting Bow", "Knife", "Chisel", "Pickaxe", "Quill", "Hammer", "Shears"];
+const tools = [
+    "Saw", "Hoe", "Fishing Rod", "Machete", "Axe",
+    "Hunting Bow", "Knife", "Chisel", "Pickaxe", "Quill", "Hammer", "Shears"
+];
 const materials = ["Leather", "Cloth", "Plate"];
 const pieces = ["Head", "Chestplate", "Leggings", "Boots", "Gloves", "Belt"];
 const tiers = Array.from({ length: 10 }, (_, i) => (i + 1).toString());
@@ -79,13 +88,14 @@ const professionToolMap = {
     Carpentry: "Saw", Farming: "Hoe", Fishing: "Fishing Rod",
     Foraging: "Machete", Forestry: "Axe", Hunting: "Hunting Bow",
     Leatherworking: "Knife", Masonry: "Chisel", Mining: "Pickaxe",
-    Scholar: "Quill", Smithing: "Hammer", Tailoring: "Shears", Cooking: null
+    Scholar: "Quill", Smithing: "Hammer", Tailoring: "Shears",
+    Cooking: null
 };
 
 // SQLite helpers
 function fetchAllAssignments() {
     return new Promise((res, rej) => {
-        db.all(`SELECT user_id,profession FROM assignments`, [], (e, rows) => {
+        db.all(`SELECT user_id, profession FROM assignments`, [], (e, rows) => {
             if (e) return rej(e);
             const m = {};
             rows.forEach(r => {
@@ -99,7 +109,7 @@ function fetchAllAssignments() {
 
 function fetchAllTools() {
     return new Promise((res, rej) => {
-        db.all(`SELECT user_id,tool,tier,rarity FROM tools`, [], (e, rows) => {
+        db.all(`SELECT user_id, tool, tier, rarity FROM tools`, [], (e, rows) => {
             if (e) return rej(e);
             const m = {};
             rows.forEach(r => {
@@ -113,7 +123,7 @@ function fetchAllTools() {
 
 function getMeta(key) {
     return new Promise((res, rej) => {
-        db.get(`SELECT value FROM meta WHERE key=?`, [key], (e, row) => {
+        db.get(`SELECT value FROM meta WHERE key = ?`, [key], (e, row) => {
             if (e) return rej(e);
             res(row?.value);
         });
@@ -122,17 +132,19 @@ function getMeta(key) {
 
 function setMeta(key, value) {
     return new Promise((res, rej) => {
-        db.run(`
-            INSERT INTO meta(key,value) VALUES(?,?)
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value
-        `, [key, value], err => err ? rej(err) : res());
+        db.run(
+            `INSERT INTO meta(key, value) VALUES(?, ?)
+       ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+            [key, value],
+            err => (err ? rej(err) : res())
+        );
     });
 }
 
-// Rebuild the “Assigned Professions” board with pagination (no armor)
+// 1) Assignment‐board updater (omitting armor)
 async function updateAssignmentEmbed(guild) {
     if (DEV) {
-        log('[DEV] Skipping embed update');
+        log('[DEV] skipping assignment embed');
         return;
     }
     try {
@@ -140,19 +152,18 @@ async function updateAssignmentEmbed(guild) {
             fetchAllAssignments(),
             fetchAllTools()
         ]);
-
         const channel = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
-        const storedId = await getMeta('board_message_id');
         let message = null;
-        if (storedId) {
+        const stored = await getMeta('board_message_id');
+        if (stored) {
             try {
-                const f = await channel.messages.fetch(storedId);
+                const f = await channel.messages.fetch(stored);
                 if (f.edit) {
                     message = f;
-                    log(`[Embed] Fetched ${storedId}`);
+                    log(`[Embed] fetched ${stored}`);
                 }
             } catch {
-                warn('[Embed] could not fetch; will recreate');
+                warn('[Embed] fetch failed; will recreate');
             }
         }
         if (!message) {
@@ -163,44 +174,37 @@ async function updateAssignmentEmbed(guild) {
             const newMsg = await channel.send({ embeds: [init] });
             await setMeta('board_message_id', newMsg.id);
             message = newMsg;
-            log(`[Embed] Created ${newMsg.id}`);
+            log(`[Embed] created ${newMsg.id}`);
         }
 
-        // Build sections (omit armor)
         const sections = professions.map(prof => {
-            const users = Object.entries(assignMap)
+            const uids = Object.entries(assignMap)
                 .filter(([, ps]) => ps.includes(prof))
                 .map(([uid]) => uid);
-            if (!users.length) return `### ${prof}\n*No one assigned*`;
-
+            if (!uids.length) return `### ${prof}\n*No one assigned*`;
             const toolName = professionToolMap[prof];
-            const lines = users.map(uid => {
-                const member = guild.members.cache.get(uid);
-                if (!member) return null;
-
-                const profRole = member.roles.cache.find(r => r.name.startsWith(`${prof} `));
-                const profText = profRole ? profRole.name : prof;
-
+            const lines = uids.map(uid => {
+                const m = guild.members.cache.get(uid);
+                if (!m) return null;
+                const role = m.roles.cache.find(r => r.name.startsWith(`${prof} `));
+                const profText = role ? role.name : prof;
                 let toolText = '';
                 if (toolName && toolMap[uid]?.[toolName]) {
                     const { tier, rarity } = toolMap[uid][toolName];
                     toolText = ` – ${rarity} T${tier} ${toolName}`;
                 }
-
                 return `- <@${uid}> – ${profText}${toolText}`;
             }).filter(Boolean);
-
             return `### ${prof}\n${lines.join('\n')}`;
         });
 
-        // Paginate into multiple embeds
+        // paginate under ~3000 chars
         const embeds = [];
         let current = new EmbedBuilder()
             .setTitle('📋 Assigned Professions')
             .setColor(0x00AEFF);
         let buffer = '';
         const MAX_BUFFER = 3000;
-
         for (const sec of sections) {
             if (buffer.length + sec.length + 2 > MAX_BUFFER) {
                 current.setDescription(buffer.trim());
@@ -218,68 +222,107 @@ async function updateAssignmentEmbed(guild) {
         }
 
         await message.edit({ embeds });
-        log('[Embed] Board updated with', embeds.length, 'pages');
+        log('[Embed] assignments updated with', embeds.length, 'pages');
     } catch (err) {
         error('[Embed] update error:', err);
     }
 }
 
-// Helper for valid rarities at a given tier
-const validRaritiesForTier = tier => rarities.filter((_, i) => tier >= i + 1);
-
-// Handle rarity-select for tools only
-async function handleSelectRarity(interaction) {
-    const [, k1, k2] = interaction.customId.split(':'); // always "tool" type now
-    const uid = interaction.user.id;
-    const tier = parseInt(k2, 10);
-    const tool = k1.replace(/_/g, ' ');
-    const rarity = interaction.values[0];
-
-    log(`[SetTool] ${interaction.user.tag} → ${tool} T${tier} ${rarity}`);
-    await new Promise((res, rej) => {
-        db.run(`
-            INSERT INTO tools(user_id,tool,tier,rarity)
-            VALUES(?,?,?,?)
-            ON CONFLICT(user_id,tool) DO UPDATE
-              SET tier=excluded.tier,
-                  rarity=excluded.rarity
-        `, [uid, tool, tier, rarity], e => e ? rej(e) : res());
-    });
-
-    await updateAssignmentEmbed(interaction.guild);
-    return interaction.update({
-        content: `✅ Set **${tool} T${tier} ${rarity}**!`,
-        embeds: [], components: []
-    });
-}
-
+// 2) Create client
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
     partials: [Partials.GuildMember]
 });
 
+// Initialize armor board with real client
+const { updateArmorEmbed } = initArmorBoard({
+    client,
+    db,
+    DEV,
+    ARMOR_CHANNEL_ID,
+    getMeta,
+    setMeta
+});
+
+// Helper for valid rarities at a tier
+const validRaritiesForTier = tier =>
+    rarities.filter((_, i) => tier >= i + 1);
+
+// Handle rarity-select for tools & armor
+async function handleSelectRarity(interaction) {
+    const [type, k1, k2, k3] = interaction.customId.split(':');
+    const uid = interaction.user.id;
+
+    if (type === 'tool') {
+        const tier = parseInt(k2, 10);
+        const tool = k1.replace(/_/g, ' ');
+        const rarity = interaction.values[0];
+        log(`[SetTool] ${interaction.user.tag} → ${tool} T${tier} ${rarity}`);
+        await new Promise((res, rej) => {
+            db.run(
+                `INSERT INTO tools(user_id,tool,tier,rarity)
+         VALUES(?,?,?,?)
+         ON CONFLICT(user_id,tool) DO UPDATE SET
+           tier=excluded.tier,
+           rarity=excluded.rarity`,
+                [uid, tool, tier, rarity],
+                e => (e ? rej(e) : res())
+            );
+        });
+        await updateAssignmentEmbed(interaction.guild);
+
+    } else if (type === 'armor') {
+        const material = k1;
+        const piece = k2;
+        const tier = parseInt(k3, 10);
+        const rarity = interaction.values[0];
+        log(`[SetArmor] ${interaction.user.tag} → ${material} ${piece} T${tier} ${rarity}`);
+        await new Promise((res, rej) => {
+            db.run(
+                `INSERT INTO armor(user_id,material,piece,tier,rarity)
+         VALUES(?,?,?,?,?)
+         ON CONFLICT(user_id,material,piece) DO UPDATE SET
+           tier=excluded.tier,
+           rarity=excluded.rarity`,
+                [uid, material, piece, tier, rarity],
+                e => (e ? rej(e) : res())
+            );
+        });
+        await updateAssignmentEmbed(interaction.guild);
+        await updateArmorEmbed(interaction.guild);
+    }
+
+    return interaction.update({
+        content: `✅ Set **${type === 'tool' ? k1.replace(/_/g, ' ') : `${k1} ${k2}`
+            }**!`,
+        embeds: [],
+        components: []
+    });
+}
+
 client.once('ready', async () => {
     log(`✅ Logged in as ${client.user.tag}`);
 
+    // Register commands
     const commands = [
-        new SlashCommandBuilder().setName('setupassignments').setDescription('Initialize board'),
+        new SlashCommandBuilder().setName('setupassignments').setDescription('Initialize boards'),
         new SlashCommandBuilder()
             .setName('assignmyselfto')
             .setDescription('Assign yourself to a profession')
-            .addStringOption(o => o
-                .setName('profession')
-                .setDescription('Profession')
-                .setRequired(true)
-                .addChoices(...professions.map(p => ({ name: p, value: p })))
+            .addStringOption(o =>
+                o.setName('profession')
+                    .setDescription('Profession')
+                    .setRequired(true)
+                    .addChoices(...professions.map(p => ({ name: p, value: p })))
             ),
         new SlashCommandBuilder()
             .setName('unassignmyselffrom')
             .setDescription('Unassign yourself from a profession')
-            .addStringOption(o => o
-                .setName('profession')
-                .setDescription('Profession')
-                .setRequired(true)
-                .addChoices(...professions.map(p => ({ name: p, value: p })))
+            .addStringOption(o =>
+                o.setName('profession')
+                    .setDescription('Profession')
+                    .setRequired(true)
+                    .addChoices(...professions.map(p => ({ name: p, value: p })))
             ),
         new SlashCommandBuilder().setName('selectprofession').setDescription('Choose a profession'),
         new SlashCommandBuilder()
@@ -312,6 +355,42 @@ client.once('ready', async () => {
                 .addChoices(...tools.map(t => ({ name: t, value: t })))
             ),
         new SlashCommandBuilder()
+            .setName('setarmor')
+            .setDescription('Assign an armor piece')
+            .addStringOption(o => o
+                .setName('material')
+                .setDescription('Leather|Cloth|Plate')
+                .setRequired(true)
+                .addChoices(...materials.map(m => ({ name: m, value: m })))
+            )
+            .addStringOption(o => o
+                .setName('piece')
+                .setDescription('Head|Chestplate|Leggings|Boots|Gloves|Belt')
+                .setRequired(true)
+                .addChoices(...pieces.map(p => ({ name: p, value: p })))
+            )
+            .addStringOption(o => o
+                .setName('tier')
+                .setDescription('Tier')
+                .setRequired(true)
+                .addChoices(...tiers.map(t => ({ name: `T${t}`, value: t })))
+            ),
+        new SlashCommandBuilder()
+            .setName('removearmor')
+            .setDescription('Remove an armor piece')
+            .addStringOption(o => o
+                .setName('material')
+                .setDescription('Leather|Cloth|Plate')
+                .setRequired(true)
+                .addChoices(...materials.map(m => ({ name: m, value: m })))
+            )
+            .addStringOption(o => o
+                .setName('piece')
+                .setDescription('Head|Chestplate|Leggings|Boots|Gloves|Belt')
+                .setRequired(true)
+                .addChoices(...pieces.map(p => ({ name: p, value: p })))
+            ),
+        new SlashCommandBuilder()
             .setName('topprofession')
             .setDescription('Show top member of a profession')
             .addStringOption(o => o
@@ -334,15 +413,18 @@ client.once('ready', async () => {
         await guild.commands.set(commands);
         await guild.members.fetch();
         await updateAssignmentEmbed(guild);
-        log(`✅ Commands registered in ${guild.name}`);
+        await updateArmorEmbed(guild);
     }
+
+    log('✅ Commands registered and embeds initialized');
 });
 
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.guild) return;
-    const { commandName, options, user, guild } = interaction;
 
     if (interaction.isChatInputCommand()) {
+        const { commandName, options, user, guild } = interaction;
+
         // setupassignments
         if (commandName === 'setupassignments') {
             log(`[Cmd] ${user.tag} → /setupassignments`);
@@ -353,7 +435,14 @@ client.on(Events.InteractionCreate, async interaction => {
                 .setColor(0x00AEFF);
             const msg = await ch.send({ embeds: [init] });
             await setMeta('board_message_id', msg.id);
-            return interaction.reply({ content: '✅ Board initialized.', ephemeral: true });
+            const ach = await guild.channels.fetch(ARMOR_CHANNEL_ID);
+            const ainit = new EmbedBuilder()
+                .setTitle('🛡️ Armor Board')
+                .setDescription('*Initializing…*')
+                .setColor(0x00AEFF);
+            const amsg = await ach.send({ embeds: [ainit] });
+            await setMeta('armor_message_id', amsg.id);
+            return interaction.reply({ content: '✅ Boards initialized.', ephemeral: true });
         }
 
         // assignmyselfto
@@ -362,8 +451,7 @@ client.on(Events.InteractionCreate, async interaction => {
             log(`[Cmd] ${user.tag} → /assignmyselfto ${prof}`);
             await new Promise((r, j) => db.run(
                 `INSERT OR IGNORE INTO assignments(user_id,profession) VALUES(?,?)`,
-                [user.id, prof],
-                e => e ? j(e) : r()
+                [user.id, prof], e => e ? j(e) : r()
             ));
             const role = guild.roles.cache.find(r => r.name === prof);
             if (role) await guild.members.fetch(user.id).then(m => m.roles.add(role));
@@ -377,8 +465,7 @@ client.on(Events.InteractionCreate, async interaction => {
             log(`[Cmd] ${user.tag} → /unassignmyselffrom ${prof}`);
             await new Promise((r, j) => db.run(
                 `DELETE FROM assignments WHERE user_id=? AND profession=?`,
-                [user.id, prof],
-                e => e ? j(e) : r()
+                [user.id, prof], e => e ? j(e) : r()
             ));
             const role = guild.roles.cache.find(r => r.name === prof);
             if (role) await guild.members.fetch(user.id).then(m => m.roles.remove(role));
@@ -394,7 +481,7 @@ client.on(Events.InteractionCreate, async interaction => {
             await interaction.reply({ content: `⏳ Timer set for ${minutes} minutes.`, ephemeral: true });
             setTimeout(() => {
                 interaction.channel.send({ content: `🔔 <@${user.id}> ${note}` });
-                log(`[Timer] Pinged ${user.tag}`);
+                log(`[Timer] Reminded ${user.tag}`);
             }, minutes * 60000);
             return;
         }
@@ -442,8 +529,7 @@ client.on(Events.InteractionCreate, async interaction => {
             log(`[Cmd] ${user.tag} → /removetool ${tool}`);
             await new Promise((r, j) => db.run(
                 `DELETE FROM tools WHERE user_id=? AND tool=?`,
-                [user.id, tool],
-                e => e ? j(e) : r()
+                [user.id, tool], e => e ? j(e) : r()
             ));
             await updateAssignmentEmbed(guild);
             return interaction.reply({ content: `✅ Removed ${tool}.`, ephemeral: true });
@@ -502,13 +588,12 @@ client.on(Events.InteractionCreate, async interaction => {
             return interaction.reply({ embeds: [embed] });
         }
     }
-
-    // StringSelectMenu handlers
-    if (interaction.isStringSelectMenu()) {
-        if (interaction.customId.startsWith('tool:')) {
+    else if (interaction.isStringSelectMenu()) {
+        const id = interaction.customId;
+        if (id.startsWith('tool:') || id.startsWith('armor:')) {
             return handleSelectRarity(interaction);
         }
-        if (interaction.customId === 'select_profession') {
+        if (id === 'select_profession') {
             const prof = interaction.values[0];
             log(`[Select] ${interaction.user.tag} → profession ${prof}`);
             const embed = new EmbedBuilder()
@@ -516,17 +601,20 @@ client.on(Events.InteractionCreate, async interaction => {
                 .setColor(0xFFD700);
             const menu = new StringSelectMenuBuilder()
                 .setCustomId(`select_level_${prof}`)
-                .setPlaceholder('Level...')
+                .setPlaceholder('Level…')
                 .addOptions(levels.map(l => ({ label: `Level ${l}`, value: l })));
             return interaction.update({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] });
         }
-        if (interaction.customId.startsWith('select_level_')) {
-            const prof = interaction.customId.replace('select_level_', '');
+        if (id.startsWith('select_level_')) {
+            const prof = id.replace('select_level_', '');
             const lvl = interaction.values[0];
             log(`[Select] ${interaction.user.tag} → level ${lvl} for ${prof}`);
             const mem = await interaction.guild.members.fetch(interaction.user.id);
             const old = mem.roles.cache.find(r => r.name.startsWith(`${prof} `));
-            if (old) { await mem.roles.remove(old); log(`[Role] Removed ${old.name}`); }
+            if (old) {
+                await mem.roles.remove(old);
+                log(`[Role] Removed ${old.name}`);
+            }
             let role = interaction.guild.roles.cache.find(r => r.name === `${prof} ${lvl}`);
             if (!role) {
                 role = await interaction.guild.roles.create({
@@ -534,7 +622,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     color: 0x3498db,
                     hoist: true,
                     mentionable: true,
-                    reason: `Role for ${prof} level ${lvl}`
+                    reason: `Created for ${prof} ${lvl}`
                 });
                 log(`[Role] Created ${role.name}`);
             }
