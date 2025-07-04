@@ -12,9 +12,7 @@ const {
 } = require('discord.js');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
-
-// Import the armor‐board module
-const initArmorBoard = require('./armorBoard');
+const initArmorBoard = require('./armorBoard'); // helper module
 
 const DEV = process.env.DEV === 'TRUE';
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -22,12 +20,11 @@ const ASSIGNMENT_CHANNEL_ID = process.env.ASSIGNMENT_CHANNEL_ID;
 const ARMOR_CHANNEL_ID = process.env.ARMOR_CHANNEL_ID;
 const DB_PATH = path.join(__dirname, 'assignments.db');
 
-// Simple timestamped logger
 const log = (...args) => console.log(new Date().toISOString(), ...args);
 const warn = (...args) => console.warn(new Date().toISOString(), ...args);
 const error = (...args) => console.error(new Date().toISOString(), ...args);
 
-// Initialize SQLite
+// --- Database setup ---
 const db = new sqlite3.Database(DB_PATH, err => {
     if (err) return error('[DB]', err);
     log(`✅ Connected to SQLite database. DEV=${DEV}`);
@@ -67,7 +64,7 @@ db.serialize(() => {
   `);
 });
 
-// Static data
+// --- Static data ---
 const professions = [
     "Carpentry", "Farming", "Fishing", "Foraging", "Forestry",
     "Hunting", "Leatherworking", "Masonry", "Mining", "Scholar",
@@ -82,17 +79,14 @@ const materials = ["Leather", "Cloth", "Plate"];
 const pieces = ["Head", "Chestplate", "Leggings", "Boots", "Gloves", "Belt"];
 const tiers = Array.from({ length: 10 }, (_, i) => (i + 1).toString());
 const rarities = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"];
-
-// profession → matching tool
 const professionToolMap = {
     Carpentry: "Saw", Farming: "Hoe", Fishing: "Fishing Rod",
     Foraging: "Machete", Forestry: "Axe", Hunting: "Hunting Bow",
     Leatherworking: "Knife", Masonry: "Chisel", Mining: "Pickaxe",
-    Scholar: "Quill", Smithing: "Hammer", Tailoring: "Shears",
-    Cooking: null
+    Scholar: "Quill", Smithing: "Hammer", Tailoring: "Shears", Cooking: null
 };
 
-// SQLite helpers
+// --- DB helpers ---
 function fetchAllAssignments() {
     return new Promise((res, rej) => {
         db.all(`SELECT user_id, profession FROM assignments`, [], (e, rows) => {
@@ -121,6 +115,25 @@ function fetchAllTools() {
     });
 }
 
+function fetchAllArmor() {
+    return new Promise((res, rej) => {
+        db.all(`SELECT user_id, material, piece, tier, rarity FROM armor`, [], (e, rows) => {
+            if (e) return rej(e);
+            const m = {};
+            rows.forEach(r => {
+                m[r.user_id] = m[r.user_id] || {};
+                m[r.user_id][`${r.material}:${r.piece}`] = {
+                    material: r.material,
+                    piece: r.piece,
+                    tier: r.tier,
+                    rarity: r.rarity
+                };
+            });
+            res(m);
+        });
+    });
+}
+
 function getMeta(key) {
     return new Promise((res, rej) => {
         db.get(`SELECT value FROM meta WHERE key = ?`, [key], (e, row) => {
@@ -133,7 +146,7 @@ function getMeta(key) {
 function setMeta(key, value) {
     return new Promise((res, rej) => {
         db.run(
-            `INSERT INTO meta(key, value) VALUES(?, ?)
+            `INSERT INTO meta(key,value) VALUES(?,?)
        ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
             [key, value],
             err => (err ? rej(err) : res())
@@ -141,40 +154,28 @@ function setMeta(key, value) {
     });
 }
 
-// 1) Assignment‐board updater (omitting armor)
+// --- Assignment‐board updater ---
 async function updateAssignmentEmbed(guild) {
-    if (DEV) {
-        log('[DEV] skipping assignment embed');
-        return;
-    }
+    if (DEV) return log('[DEV] skipping assignment embed');
     try {
         const [assignMap, toolMap] = await Promise.all([
             fetchAllAssignments(),
             fetchAllTools()
         ]);
         const channel = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
-        let message = null;
+        let msg = null;
         const stored = await getMeta('board_message_id');
         if (stored) {
-            try {
-                const f = await channel.messages.fetch(stored);
-                if (f.edit) {
-                    message = f;
-                    log(`[Embed] fetched ${stored}`);
-                }
-            } catch {
-                warn('[Embed] fetch failed; will recreate');
-            }
+            try { msg = await channel.messages.fetch(stored); }
+            catch { /* recreate */ }
         }
-        if (!message) {
+        if (!msg) {
             const init = new EmbedBuilder()
                 .setTitle('📋 Assigned Professions')
                 .setDescription('*Initializing…*')
                 .setColor(0x00AEFF);
-            const newMsg = await channel.send({ embeds: [init] });
-            await setMeta('board_message_id', newMsg.id);
-            message = newMsg;
-            log(`[Embed] created ${newMsg.id}`);
+            msg = await channel.send({ embeds: [init] });
+            await setMeta('board_message_id', msg.id);
         }
 
         const sections = professions.map(prof => {
@@ -200,110 +201,139 @@ async function updateAssignmentEmbed(guild) {
 
         // paginate under ~3000 chars
         const embeds = [];
-        let current = new EmbedBuilder()
-            .setTitle('📋 Assigned Professions')
-            .setColor(0x00AEFF);
-        let buffer = '';
-        const MAX_BUFFER = 3000;
+        let cur = new EmbedBuilder().setTitle('📋 Assigned Professions').setColor(0x00AEFF);
+        let buf = '';
+        const MAX = 3000;
         for (const sec of sections) {
-            if (buffer.length + sec.length + 2 > MAX_BUFFER) {
-                current.setDescription(buffer.trim());
-                embeds.push(current);
-                current = new EmbedBuilder()
-                    .setTitle('📋 Assigned Professions (cont’d)')
-                    .setColor(0x00AEFF);
-                buffer = '';
+            if (buf.length + sec.length > MAX) {
+                cur.setDescription(buf);
+                embeds.push(cur);
+                cur = new EmbedBuilder().setTitle('📋 Assigned Professions (cont’d)').setColor(0x00AEFF);
+                buf = '';
             }
-            buffer += sec + '\n\n';
+            buf += sec + '\n\n';
         }
-        if (buffer.length) {
-            current.setDescription(buffer.trim());
-            embeds.push(current);
+        if (buf) {
+            cur.setDescription(buf);
+            embeds.push(cur);
         }
 
-        await message.edit({ embeds });
-        log('[Embed] assignments updated with', embeds.length, 'pages');
+        await msg.edit({ embeds });
+        log('[Embed] assignment updated');
     } catch (err) {
-        error('[Embed] update error:', err);
+        error('[Embed] assignment error', err);
     }
 }
 
-// 2) Create client
+// --- Armor‐board updater (3‐column) ---
+async function updateArmorEmbed(guild) {
+    if (DEV) return log('[DEV] skipping armor embed');
+    try {
+        const armorMap = await fetchAllArmor();
+        const channel = await client.channels.fetch(ARMOR_CHANNEL_ID);
+        let msg = null;
+        const stored = await getMeta('armor_message_id');
+        if (stored) {
+            try { msg = await channel.messages.fetch(stored); }
+            catch { }
+        }
+        if (!msg) {
+            const init = new EmbedBuilder()
+                .setTitle('🛡️ Armor Board')
+                .setDescription('*Initializing…*')
+                .setColor(0x00AEFF);
+            msg = await channel.send({ embeds: [init] });
+            await setMeta('armor_message_id', msg.id);
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('🛡️ Armor Board')
+            .setColor(0x00AEFF)
+            .setTimestamp()
+            .setDescription('*Cloth & Leather only*');
+
+        for (const [uid, userArmor] of Object.entries(armorMap)) {
+            // Cloth
+            const clothLines = Object.values(userArmor)
+                .filter(a => a.material === 'Cloth')
+                .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
+                .join('\n') || '*(none)*';
+            // Leather
+            const leatherLines = Object.values(userArmor)
+                .filter(a => a.material === 'Leather')
+                .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
+                .join('\n') || '*(none)*';
+
+            embed.addFields(
+                { name: 'User', value: `<@${uid}>`, inline: true },
+                { name: '🧵 Cloth', value: clothLines, inline: true },
+                { name: '🥾 Leather', value: leatherLines, inline: true }
+            );
+
+            if (embed.data.fields.length >= 24) break;
+        }
+
+        await msg.edit({ embeds: [embed] });
+        log('[Embed] armor updated');
+    } catch (err) {
+        error('[Embed] armor error', err);
+    }
+}
+
+// valid rarities for a tier
+const validRaritiesForTier = tier => rarities.filter((_, i) => tier >= i + 1);
+
+// handle rarity‐selects
+async function handleSelectRarity(interaction) {
+    const [type, k1, k2, k3] = interaction.customId.split(':');
+    const uid = interaction.user.id;
+    if (type === 'tool') {
+        const tier = parseInt(k2, 10);
+        const tool = k1.replace(/_/g, ' ');
+        const rarity = interaction.values[0];
+        await new Promise((res, rej) => db.run(
+            `INSERT INTO tools(user_id,tool,tier,rarity)
+       VALUES(?,?,?,?)
+       ON CONFLICT(user_id,tool) DO UPDATE SET
+         tier=excluded.tier,rarity=excluded.rarity`,
+            [uid, tool, tier, rarity],
+            e => e ? rej(e) : res()
+        ));
+        await updateAssignmentEmbed(interaction.guild);
+    }
+    if (type === 'armor') {
+        const material = k1, piece = k2, tier = parseInt(k3, 10);
+        const rarity = interaction.values[0];
+        await new Promise((res, rej) => db.run(
+            `INSERT INTO armor(user_id,material,piece,tier,rarity)
+       VALUES(?,?,?,?,?)
+       ON CONFLICT(user_id,material,piece) DO UPDATE SET
+         tier=excluded.tier,rarity=excluded.rarity`,
+            [uid, material, piece, tier, rarity],
+            e => e ? rej(e) : res()
+        ));
+        await updateAssignmentEmbed(interaction.guild);
+        await updateArmorEmbed(interaction.guild);
+    }
+    return interaction.update({
+        content: `✅ Set **${type === 'tool' ? k1.replace(/_/g, ' ') : `${k1} ${k2}`}**!`,
+        embeds: [], components: []
+    });
+}
+
+// create client
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
     partials: [Partials.GuildMember]
 });
 
-// Initialize armor board with real client
-const { updateArmorEmbed } = initArmorBoard({
-    client,
-    db,
-    DEV,
-    ARMOR_CHANNEL_ID,
-    getMeta,
-    setMeta
-});
-
-// Helper for valid rarities at a tier
-const validRaritiesForTier = tier =>
-    rarities.filter((_, i) => tier >= i + 1);
-
-// Handle rarity-select for tools & armor
-async function handleSelectRarity(interaction) {
-    const [type, k1, k2, k3] = interaction.customId.split(':');
-    const uid = interaction.user.id;
-
-    if (type === 'tool') {
-        const tier = parseInt(k2, 10);
-        const tool = k1.replace(/_/g, ' ');
-        const rarity = interaction.values[0];
-        log(`[SetTool] ${interaction.user.tag} → ${tool} T${tier} ${rarity}`);
-        await new Promise((res, rej) => {
-            db.run(
-                `INSERT INTO tools(user_id,tool,tier,rarity)
-         VALUES(?,?,?,?)
-         ON CONFLICT(user_id,tool) DO UPDATE SET
-           tier=excluded.tier,
-           rarity=excluded.rarity`,
-                [uid, tool, tier, rarity],
-                e => (e ? rej(e) : res())
-            );
-        });
-        await updateAssignmentEmbed(interaction.guild);
-
-    } else if (type === 'armor') {
-        const material = k1;
-        const piece = k2;
-        const tier = parseInt(k3, 10);
-        const rarity = interaction.values[0];
-        log(`[SetArmor] ${interaction.user.tag} → ${material} ${piece} T${tier} ${rarity}`);
-        await new Promise((res, rej) => {
-            db.run(
-                `INSERT INTO armor(user_id,material,piece,tier,rarity)
-         VALUES(?,?,?,?,?)
-         ON CONFLICT(user_id,material,piece) DO UPDATE SET
-           tier=excluded.tier,
-           rarity=excluded.rarity`,
-                [uid, material, piece, tier, rarity],
-                e => (e ? rej(e) : res())
-            );
-        });
-        await updateAssignmentEmbed(interaction.guild);
-        await updateArmorEmbed(interaction.guild);
-    }
-
-    return interaction.update({
-        content: `✅ Set **${type === 'tool' ? k1.replace(/_/g, ' ') : `${k1} ${k2}`
-            }**!`,
-        embeds: [],
-        components: []
-    });
-}
+// patch client into armorBoard
+Object.defineProperty(initArmorBoard, 'client', { value: client });
 
 client.once('ready', async () => {
     log(`✅ Logged in as ${client.user.tag}`);
 
-    // Register commands
+    // register commands
     const commands = [
         new SlashCommandBuilder().setName('setupassignments').setDescription('Initialize boards'),
         new SlashCommandBuilder()
@@ -333,79 +363,79 @@ client.once('ready', async () => {
         new SlashCommandBuilder()
             .setName('settool')
             .setDescription('Assign a tool + tier')
-            .addStringOption(o => o
-                .setName('tool')
-                .setDescription('Tool')
-                .setRequired(true)
-                .addChoices(...tools.map(t => ({ name: t, value: t })))
+            .addStringOption(o =>
+                o.setName('tool')
+                    .setDescription('Tool')
+                    .setRequired(true)
+                    .addChoices(...tools.map(t => ({ name: t, value: t })))
             )
-            .addStringOption(o => o
-                .setName('tier')
-                .setDescription('Tier')
-                .setRequired(true)
-                .addChoices(...tiers.map(t => ({ name: `T${t}`, value: t })))
+            .addStringOption(o =>
+                o.setName('tier')
+                    .setDescription('Tier')
+                    .setRequired(true)
+                    .addChoices(...tiers.map(t => ({ name: `T${t}`, value: t })))
             ),
         new SlashCommandBuilder()
             .setName('removetool')
             .setDescription('Remove a tool')
-            .addStringOption(o => o
-                .setName('tool')
-                .setDescription('Tool to remove')
-                .setRequired(true)
-                .addChoices(...tools.map(t => ({ name: t, value: t })))
+            .addStringOption(o =>
+                o.setName('tool')
+                    .setDescription('Tool to remove')
+                    .setRequired(true)
+                    .addChoices(...tools.map(t => ({ name: t, value: t })))
             ),
         new SlashCommandBuilder()
             .setName('setarmor')
             .setDescription('Assign an armor piece')
-            .addStringOption(o => o
-                .setName('material')
-                .setDescription('Leather|Cloth|Plate')
-                .setRequired(true)
-                .addChoices(...materials.map(m => ({ name: m, value: m })))
+            .addStringOption(o =>
+                o.setName('material')
+                    .setDescription('Leather|Cloth|Plate')
+                    .setRequired(true)
+                    .addChoices(...materials.map(m => ({ name: m, value: m })))
             )
-            .addStringOption(o => o
-                .setName('piece')
-                .setDescription('Head|Chestplate|Leggings|Boots|Gloves|Belt')
-                .setRequired(true)
-                .addChoices(...pieces.map(p => ({ name: p, value: p })))
+            .addStringOption(o =>
+                o.setName('piece')
+                    .setDescription('Head|Chestplate|Leggings|Boots|Gloves|Belt')
+                    .setRequired(true)
+                    .addChoices(...pieces.map(p => ({ name: p, value: p })))
             )
-            .addStringOption(o => o
-                .setName('tier')
-                .setDescription('Tier')
-                .setRequired(true)
-                .addChoices(...tiers.map(t => ({ name: `T${t}`, value: t })))
+            .addStringOption(o =>
+                o.setName('tier')
+                    .setDescription('Tier')
+                    .setRequired(true)
+                    .addChoices(...tiers.map(t => ({ name: `T${t}`, value: t })))
             ),
         new SlashCommandBuilder()
             .setName('removearmor')
             .setDescription('Remove an armor piece')
-            .addStringOption(o => o
-                .setName('material')
-                .setDescription('Leather|Cloth|Plate')
-                .setRequired(true)
-                .addChoices(...materials.map(m => ({ name: m, value: m })))
+            .addStringOption(o =>
+                o.setName('material')
+                    .setDescription('Leather|Cloth|Plate')
+                    .setRequired(true)
+                    .addChoices(...materials.map(m => ({ name: m, value: m })))
             )
-            .addStringOption(o => o
-                .setName('piece')
-                .setDescription('Head|Chestplate|Leggings|Boots|Gloves|Belt')
-                .setRequired(true)
-                .addChoices(...pieces.map(p => ({ name: p, value: p })))
+            .addStringOption(o =>
+                o.setName('piece')
+                    .setDescription('Head|Chestplate|Leggings|Boots|Gloves|Belt')
+                    .setRequired(true)
+                    .addChoices(...pieces.map(p => ({ name: p, value: p })))
             ),
         new SlashCommandBuilder()
             .setName('topprofession')
             .setDescription('Show top member of a profession')
-            .addStringOption(o => o
-                .setName('profession')
-                .setDescription('Profession')
-                .setRequired(true)
-                .addChoices(...professions.map(p => ({ name: p, value: p })))
+            .addStringOption(o =>
+                o.setName('profession')
+                    .setDescription('Profession')
+                    .setRequired(true)
+                    .addChoices(...professions.map(p => ({ name: p, value: p })))
             ),
         new SlashCommandBuilder()
             .setName('info')
             .setDescription('Show full profile info for a user')
-            .addUserOption(o => o
-                .setName('target')
-                .setDescription('User')
-                .setRequired(true)
+            .addUserOption(o =>
+                o.setName('target')
+                    .setDescription('User')
+                    .setRequired(true)
             )
     ].map(cmd => cmd.toJSON());
 
@@ -415,8 +445,6 @@ client.once('ready', async () => {
         await updateAssignmentEmbed(guild);
         await updateArmorEmbed(guild);
     }
-
-    log('✅ Commands registered and embeds initialized');
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -481,7 +509,7 @@ client.on(Events.InteractionCreate, async interaction => {
             await interaction.reply({ content: `⏳ Timer set for ${minutes} minutes.`, ephemeral: true });
             setTimeout(() => {
                 interaction.channel.send({ content: `🔔 <@${user.id}> ${note}` });
-                log(`[Timer] Reminded ${user.tag}`);
+                log(`[Timer] Pinged ${user.tag}`);
             }, minutes * 60000);
             return;
         }
@@ -489,18 +517,12 @@ client.on(Events.InteractionCreate, async interaction => {
         // selectprofession
         if (commandName === 'selectprofession') {
             log(`[Cmd] ${user.tag} → /selectprofession`);
-            const embed = new EmbedBuilder()
-                .setTitle('Choose a profession')
-                .setColor(0x00AEFF);
+            const embed = new EmbedBuilder().setTitle('Choose a profession').setColor(0x00AEFF);
             const menu = new StringSelectMenuBuilder()
                 .setCustomId('select_profession')
                 .setPlaceholder('Profession...')
                 .addOptions(professions.map(p => ({ label: p, value: p })));
-            return interaction.reply({
-                embeds: [embed],
-                components: [new ActionRowBuilder().addComponents(menu)],
-                ephemeral: true
-            });
+            return interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
         }
 
         // settool
@@ -511,16 +533,10 @@ client.on(Events.InteractionCreate, async interaction => {
             const valid = validRaritiesForTier(tier);
             const menu = new StringSelectMenuBuilder()
                 .setCustomId(`tool:${tool.replace(/\s+/g, '_')}:${tier}`)
-                .setPlaceholder('Rarity…')
+                .setPlaceholder('Select rarity…')
                 .addOptions(valid.map(r => ({ label: `${r} T${tier}`, value: r })));
-            const embed = new EmbedBuilder()
-                .setTitle(`Choose rarity for ${tool} T${tier}`)
-                .setColor(0xFFD700);
-            return interaction.reply({
-                embeds: [embed],
-                components: [new ActionRowBuilder().addComponents(menu)],
-                ephemeral: true
-            });
+            const embed = new EmbedBuilder().setTitle(`Choose rarity for ${tool} T${tier}`).setColor(0xFFD700);
+            return interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
         }
 
         // removetool
@@ -535,6 +551,35 @@ client.on(Events.InteractionCreate, async interaction => {
             return interaction.reply({ content: `✅ Removed ${tool}.`, ephemeral: true });
         }
 
+        // setarmor
+        if (commandName === 'setarmor') {
+            const material = options.getString('material');
+            const piece = options.getString('piece');
+            const tier = parseInt(options.getString('tier'), 10);
+            log(`[Cmd] ${user.tag} → /setarmor ${material} ${piece} T${tier}`);
+            const valid = validRaritiesForTier(tier);
+            const menu = new StringSelectMenuBuilder()
+                .setCustomId(`armor:${material}:${piece}:${tier}`)
+                .setPlaceholder('Select rarity…')
+                .addOptions(valid.map(r => ({ label: `${r} T${tier}`, value: r })));
+            const embed = new EmbedBuilder().setTitle(`Choose rarity for ${material} ${piece} T${tier}`).setColor(0xFFD700);
+            return interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
+        }
+
+        // removearmor
+        if (commandName === 'removearmor') {
+            const material = options.getString('material');
+            const piece = options.getString('piece');
+            log(`[Cmd] ${user.tag} → /removearmor ${material} ${piece}`);
+            await new Promise((r, j) => db.run(
+                `DELETE FROM armor WHERE user_id=? AND material=? AND piece=?`,
+                [user.id, material, piece], e => e ? j(e) : r()
+            ));
+            await updateAssignmentEmbed(guild);
+            await updateArmorEmbed(guild);
+            return interaction.reply({ content: `✅ Removed ${material} ${piece}.`, ephemeral: true });
+        }
+
         // topprofession
         if (commandName === 'topprofession') {
             const prof = options.getString('profession');
@@ -547,8 +592,7 @@ client.on(Events.InteractionCreate, async interaction => {
                     .sort((a, b) =>
                         parseInt(b.name.split(' ')[1], 10) -
                         parseInt(a.name.split(' ')[1], 10)
-                    )
-                    .first();
+                    ).first();
                 if (role) {
                     const v = parseInt(role.name.split(' ')[1], 10);
                     if (v > lvl) { lvl = v; top = m; }
@@ -558,7 +602,7 @@ client.on(Events.InteractionCreate, async interaction => {
             return interaction.reply({ content: `🏆 Top ${prof}: ${top} – Level ${lvl}` });
         }
 
-        // info
+        // info (only professions/tools; armor omitted here)
         if (commandName === 'info') {
             const target = options.getUser('target');
             const uid = target.id;
@@ -571,8 +615,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
             const toolMap = await fetchAllTools();
             const tmap = toolMap[uid] || {};
-            const toolList = Object.entries(tmap)
-                .map(([tool, { tier, rarity }]) => `${rarity} T${tier} ${tool}`);
+            const toolList = Object.entries(tmap).map(([tool, { tier, rarity }]) => `${rarity} T${tier} ${tool}`);
 
             const embed = new EmbedBuilder()
                 .setTitle(`${target.username}'s Profile`)
@@ -596,9 +639,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (id === 'select_profession') {
             const prof = interaction.values[0];
             log(`[Select] ${interaction.user.tag} → profession ${prof}`);
-            const embed = new EmbedBuilder()
-                .setTitle(`Profession: ${prof}`)
-                .setColor(0xFFD700);
+            const embed = new EmbedBuilder().setTitle(`Profession: ${prof}`).setColor(0xFFD700);
             const menu = new StringSelectMenuBuilder()
                 .setCustomId(`select_level_${prof}`)
                 .setPlaceholder('Level…')
@@ -611,10 +652,7 @@ client.on(Events.InteractionCreate, async interaction => {
             log(`[Select] ${interaction.user.tag} → level ${lvl} for ${prof}`);
             const mem = await interaction.guild.members.fetch(interaction.user.id);
             const old = mem.roles.cache.find(r => r.name.startsWith(`${prof} `));
-            if (old) {
-                await mem.roles.remove(old);
-                log(`[Role] Removed ${old.name}`);
-            }
+            if (old) { await mem.roles.remove(old); log(`[Role] Removed ${old.name}`); }
             let role = interaction.guild.roles.cache.find(r => r.name === `${prof} ${lvl}`);
             if (!role) {
                 role = await interaction.guild.roles.create({
