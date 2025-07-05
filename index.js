@@ -654,24 +654,44 @@ client.on(Events.InteractionCreate, async interaction => {
         }
 
         // topprofession
+        // inside your InteractionCreate handler, under `if (commandName === 'topprofession') { ... }`
         if (commandName === 'topprofession') {
             const prof = options.getString('profession');
             log(`[Cmd] ${user.tag} → /topprofession ${prof}`);
+
+            // Ensure all members are cached
             await guild.members.fetch();
-            let top = null, lvl = -1;
-            guild.members.cache.forEach(m => {
-                const role = m.roles.cache
-                    .filter(r => r.name.startsWith(`${prof} `))
-                    .sort((a, b) => parseInt(b.name.split(' ')[1], 10) - parseInt(a.name.split(' ')[1], 10))
-                    .first();
-                if (role) {
-                    const v = parseInt(role.name.split(' ')[1], 10);
-                    if (v > lvl) { lvl = v; top = m; }
-                }
+
+            // Build a list of { member, level } for anyone with a role like "Prof 50"
+            const candidates = guild.members.cache
+                .map(member => {
+                    const role = member.roles.cache.find(r => r.name.startsWith(`${prof} `));
+                    if (!role) return null;
+                    const lvl = parseInt(role.name.split(' ')[1], 10);
+                    return { member, level: lvl };
+                })
+                .filter(x => x !== null)
+                .sort((a, b) => b.level - a.level)  // highest levels first
+                .slice(0, 5);                         // take top 5
+
+            if (candidates.length === 0) {
+                return interaction.reply({
+                    content: `❌ No one has any **${prof}** role yet.`,
+                    ephemeral: true
+                });
+            }
+
+            // Format a numbered list
+            const list = candidates
+                .map((c, i) => `**${i + 1}.** <@${c.member.id}> — Level ${c.level}`)
+                .join('\n');
+
+            return interaction.reply({
+                content: `🏆 **Top 5 ${prof}:**\n${list}`,
+                ephemeral: true
             });
-            if (!top) return interaction.reply({ content: `No one has ${prof}`, ephemeral: true });
-            return interaction.reply({ content: `🏆 Top ${prof}: ${top} – Level ${lvl}` });
         }
+
 
         // info
         if (commandName === 'info') {
