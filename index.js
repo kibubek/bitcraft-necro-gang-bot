@@ -234,51 +234,56 @@ async function updateAssignmentEmbed(guild) {
 // ————————————————————————————————————————————————————————————— Armor Board —————————————————————————————————————————————————————————————
 async function updateArmorEmbed(guild) {
     if (DEV) {
-        log('[DEV] skip armor embed');
+        log('[DEV] skipping armor embed');
         return;
     }
 
     try {
+        // 1) load saved armor
         const armorMap = await fetchAllArmor();
-        const channel = await client.channels.fetch(ARMOR_CHANNEL_ID);
 
-        // build flat list of fields (3 per member)
-        const allFields = [];
-        for (const member of guild.members.cache.values()) {
-            if (member.user.bot) continue;
-            const uid = member.id;
-            const userArmor = armorMap[uid] || {};
+        // 2) collect all non-bot member IDs
+        const members = guild.members.cache
+            .filter(m => !m.user.bot)
+            .map(m => m.id);
 
-            const clothLines = Object.values(userArmor)
-                .filter(a => a.material === 'Cloth')
-                .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
-                .join('\n') || '*(none)*';
-
-            const leatherLines = Object.values(userArmor)
-                .filter(a => a.material === 'Leather')
-                .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
-                .join('\n') || '*(none)*';
-
-            allFields.push(
-                { name: 'User', value: `<@${uid}>`, inline: true },
-                { name: '🧵 Cloth', value: clothLines, inline: true },
-                { name: '🥾 Leather', value: leatherLines, inline: true }
-            );
-        }
-
-        // chunk into pages of 25 fields
+        // 3) define how many users per embed
+        const USERS_PER_PAGE = 8;
         const pages = [];
-        for (let i = 0; i < allFields.length; i += 25) {
-            pages.push(
-                new EmbedBuilder()
-                    .setTitle('🛡️ Armor Board')
-                    .setDescription('*Cloth & Leather only*')
-                    .setColor(0x00AEFF)
-                    .setTimestamp()
-                    .addFields(allFields.slice(i, i + 25))
-            );
+
+        for (let i = 0; i < members.length; i += USERS_PER_PAGE) {
+            const page = new EmbedBuilder()
+                .setTitle('🛡️ Armor Board')
+                .setDescription('*Cloth & Leather only*')
+                .setColor(0x00AEFF)
+                .setTimestamp();
+
+            // for each user in this slice, add exactly 3 fields
+            for (const uid of members.slice(i, i + USERS_PER_PAGE)) {
+                const userArmor = armorMap[uid] || {};
+
+                const cloth = Object.values(userArmor)
+                    .filter(a => a.material === 'Cloth')
+                    .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
+                    .join('\n') || '*(none)*';
+
+                const leather = Object.values(userArmor)
+                    .filter(a => a.material === 'Leather')
+                    .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
+                    .join('\n') || '*(none)*';
+
+                page.addFields(
+                    { name: 'User', value: `<@${uid}>`, inline: true },
+                    { name: '🧵 Cloth', value: cloth, inline: true },
+                    { name: '🥾 Leather', value: leather, inline: true }
+                );
+            }
+
+            pages.push(page);
         }
-        if (!pages.length) {
+
+        // if no human members at all, show a single placeholder
+        if (pages.length === 0) {
             pages.push(
                 new EmbedBuilder()
                     .setTitle('🛡️ Armor Board')
@@ -287,12 +292,13 @@ async function updateArmorEmbed(guild) {
             );
         }
 
-        // fetch or create message
+        // 4) fetch/create the board message, then edit with all pages
+        const channel = await client.channels.fetch(ARMOR_CHANNEL_ID);
         let msg = null;
         const stored = await getMeta('armor_message_id');
         if (stored) {
             try { msg = await channel.messages.fetch(stored); }
-            catch { }
+            catch { /* will recreate below */ }
         }
         if (!msg) {
             msg = await channel.send({ embeds: [pages[0]] });
@@ -301,11 +307,12 @@ async function updateArmorEmbed(guild) {
             await msg.edit({ embeds: pages });
         }
 
-        log(`[Armor] board updated across ${pages.length} embed(s)`);
+        log(`[Armor] board updated across ${pages.length} page(s)`);
     } catch (err) {
         error('[Armor] update error', err);
     }
 }
+
 
 // ————————————————————————————————————————————————————————————— Utility —————————————————————————————————————————————————————————————
 const validRaritiesForTier = tier => rarities.filter((_, i) => tier >= i + 1);
@@ -346,8 +353,8 @@ async function handleSelectRarity(interaction) {
 
     return interaction.update({
         content: `✅ Set **${type === 'tool'
-                ? k1.replace(/_/g, ' ')
-                : `${k1} ${k2}`
+            ? k1.replace(/_/g, ' ')
+            : `${k1} ${k2}`
             }**!`,
         embeds: [], components: []
     });
