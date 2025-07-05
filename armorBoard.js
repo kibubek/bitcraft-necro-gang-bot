@@ -27,62 +27,79 @@ module.exports = function initArmorBoard({ client, db, DEV, ARMOR_CHANNEL_ID, ge
 
     async function updateArmorEmbed(guild) {
         if (DEV) {
-            console.log('[DEV] skip armor embed');
+            console.log('[DEV] skipping armor embed');
             return;
         }
 
         try {
             const armorMap = await fetchAllArmor();
             const channel = await client.channels.fetch(ARMOR_CHANNEL_ID);
-            let message;
+
+            // fetch or initialize the message
+            let msg;
             const stored = await getMeta('armor_message_id');
             if (stored) {
-                try { message = await channel.messages.fetch(stored); }
-                catch { }
+                try { msg = await channel.messages.fetch(stored); }
+                catch { /* create below */ }
             }
-            if (!message) {
+            if (!msg) {
                 const init = new EmbedBuilder()
                     .setTitle('🛡️ Armor Board')
                     .setDescription('*Initializing…*')
                     .setColor(0x00AEFF);
-                message = await channel.send({ embeds: [init] });
-                await setMeta('armor_message_id', message.id);
+                msg = await channel.send({ embeds: [init] });
+                await setMeta('armor_message_id', msg.id);
             }
 
-            const embed = new EmbedBuilder()
-                .setTitle('🛡️ Armor Board')
-                .setColor(0x00AEFF)
-                .setDescription('*Cloth & Leather only*');
+            // build pages of up to 25 fields each
+            const allFields = [];
             for (const [uid, userArmor] of Object.entries(armorMap)) {
-                // Cloth lines
-                const clothLines = Object.values(userArmor)
+                const cloth = Object.values(userArmor)
                     .filter(a => a.material === 'Cloth')
                     .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
                     .join('\n') || '*(none)*';
 
-                // Leather lines
-                const leatherLines = Object.values(userArmor)
+                const leather = Object.values(userArmor)
                     .filter(a => a.material === 'Leather')
                     .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
                     .join('\n') || '*(none)*';
 
-                embed.addFields(
+                allFields.push(
                     { name: 'User', value: `<@${uid}>`, inline: true },
-                    { name: '🧵 Cloth', value: clothLines, inline: true },
-                    { name: '🥾 Leather', value: leatherLines, inline: true }
+                    { name: '🧵 Cloth', value: cloth, inline: true },
+                    { name: '🥾 Leather', value: leather, inline: true }
                 );
-
-                // Discord caps at 25 fields (so ~8 users); break if near limit
-                if (embed.data.fields.length >= 24) break;
             }
 
-            await message.edit({ embeds: [embed] });
-            console.log('[Armor] board updated (3-column layout)');
+            // chunk into groups of 25
+            const pages = [];
+            for (let i = 0; i < allFields.length; i += 25) {
+                const slice = allFields.slice(i, i + 25);
+                const embed = new EmbedBuilder()
+                    .setTitle('🛡️ Armor Board')
+                    .setDescription('*Cloth & Leather only*')
+                    .setColor(0x00AEFF)
+                    .setTimestamp()
+                    .addFields(slice);
+                pages.push(embed);
+            }
+
+            // if there were no users, show an empty placeholder
+            if (pages.length === 0) {
+                pages.push(
+                    new EmbedBuilder()
+                        .setTitle('🛡️ Armor Board')
+                        .setDescription('*No Cloth or Leather set yet.*')
+                        .setColor(0x00AEFF)
+                );
+            }
+
+            await msg.edit({ embeds: pages });
+            console.log(`[Armor] board updated across ${pages.length} embed(s)`);
         } catch (err) {
             console.error('[Armor] update error', err);
         }
     }
-
 
     // Slash‐command definitions for setarmor/removearmor
     const armorCommands = [

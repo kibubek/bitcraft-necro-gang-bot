@@ -12,19 +12,19 @@ const {
 } = require('discord.js');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
-const initArmorBoard = require('./armorBoard'); // helper module
 
 const DEV = process.env.DEV === 'TRUE';
 const TOKEN = process.env.DISCORD_TOKEN;
 const ASSIGNMENT_CHANNEL_ID = process.env.ASSIGNMENT_CHANNEL_ID;
 const ARMOR_CHANNEL_ID = process.env.ARMOR_CHANNEL_ID;
+const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID;
 const DB_PATH = path.join(__dirname, 'assignments.db');
 
 const log = (...args) => console.log(new Date().toISOString(), ...args);
 const warn = (...args) => console.warn(new Date().toISOString(), ...args);
 const error = (...args) => console.error(new Date().toISOString(), ...args);
 
-// --- Database setup ---
+// ————————————————————————————————————————————————————————————— Database Setup —————————————————————————————————————————————————————————————
 const db = new sqlite3.Database(DB_PATH, err => {
     if (err) return error('[DB]', err);
     log(`✅ Connected to SQLite database. DEV=${DEV}`);
@@ -64,14 +64,14 @@ db.serialize(() => {
   `);
 });
 
-// --- Static data ---
+// ————————————————————————————————————————————————————————————— Static Data —————————————————————————————————————————————————————————————
 const professions = [
     "Carpentry", "Farming", "Fishing", "Foraging", "Forestry",
     "Hunting", "Leatherworking", "Masonry", "Mining", "Scholar",
     "Smithing", "Tailoring", "Cooking"
 ];
 const levels = ["10", "20", "30", "40", "50", "60", "70", "80", "90", "100"];
-const tools = [
+const toolsList = [
     "Saw", "Hoe", "Fishing Rod", "Machete", "Axe",
     "Hunting Bow", "Knife", "Chisel", "Pickaxe", "Quill", "Hammer", "Shears"
 ];
@@ -86,7 +86,7 @@ const professionToolMap = {
     Scholar: "Quill", Smithing: "Hammer", Tailoring: "Shears", Cooking: null
 };
 
-// --- DB helpers ---
+// ————————————————————————————————————————————————————————————— DB Helpers —————————————————————————————————————————————————————————————
 function fetchAllAssignments() {
     return new Promise((res, rej) => {
         db.all(`SELECT user_id, profession FROM assignments`, [], (e, rows) => {
@@ -149,14 +149,18 @@ function setMeta(key, value) {
             `INSERT INTO meta(key,value) VALUES(?,?)
        ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
             [key, value],
-            err => (err ? rej(err) : res())
+            err => err ? rej(err) : res()
         );
     });
 }
 
-// --- Assignment‐board updater ---
+// ————————————————————————————————————————————————————————————— Assignment Board —————————————————————————————————————————————————————————————
 async function updateAssignmentEmbed(guild) {
-    if (DEV) return log('[DEV] skipping assignment embed');
+    if (DEV) {
+        log('[DEV] skip assignment embed');
+        return;
+    }
+
     try {
         const [assignMap, toolMap] = await Promise.all([
             fetchAllAssignments(),
@@ -167,7 +171,7 @@ async function updateAssignmentEmbed(guild) {
         const stored = await getMeta('board_message_id');
         if (stored) {
             try { msg = await channel.messages.fetch(stored); }
-            catch { /* recreate */ }
+            catch { }
         }
         if (!msg) {
             const init = new EmbedBuilder()
@@ -179,12 +183,13 @@ async function updateAssignmentEmbed(guild) {
         }
 
         const sections = professions.map(prof => {
-            const uids = Object.entries(assignMap)
+            const users = Object.entries(assignMap)
                 .filter(([, ps]) => ps.includes(prof))
                 .map(([uid]) => uid);
-            if (!uids.length) return `### ${prof}\n*No one assigned*`;
+            if (!users.length) return `### ${prof}\n*No one assigned*`;
+
             const toolName = professionToolMap[prof];
-            const lines = uids.map(uid => {
+            const lines = users.map(uid => {
                 const m = guild.members.cache.get(uid);
                 if (!m) return null;
                 const role = m.roles.cache.find(r => r.name.startsWith(`${prof} `));
@@ -196,17 +201,18 @@ async function updateAssignmentEmbed(guild) {
                 }
                 return `- <@${uid}> – ${profText}${toolText}`;
             }).filter(Boolean);
+
             return `### ${prof}\n${lines.join('\n')}`;
         });
 
-        // paginate under ~3000 chars
+        // paginate ~3000 chars per embed
         const embeds = [];
         let cur = new EmbedBuilder().setTitle('📋 Assigned Professions').setColor(0x00AEFF);
         let buf = '';
         const MAX = 3000;
         for (const sec of sections) {
             if (buf.length + sec.length > MAX) {
-                cur.setDescription(buf);
+                cur.setDescription(buf.trim());
                 embeds.push(cur);
                 cur = new EmbedBuilder().setTitle('📋 Assigned Professions (cont’d)').setColor(0x00AEFF);
                 buf = '';
@@ -214,23 +220,74 @@ async function updateAssignmentEmbed(guild) {
             buf += sec + '\n\n';
         }
         if (buf) {
-            cur.setDescription(buf);
+            cur.setDescription(buf.trim());
             embeds.push(cur);
         }
 
         await msg.edit({ embeds });
-        log('[Embed] assignment updated');
+        log(`[Embed] assignment updated (${embeds.length} pages)`);
     } catch (err) {
         error('[Embed] assignment error', err);
     }
 }
 
-// --- Armor‐board updater (3‐column) ---
+// ————————————————————————————————————————————————————————————— Armor Board —————————————————————————————————————————————————————————————
 async function updateArmorEmbed(guild) {
-    if (DEV) return log('[DEV] skipping armor embed');
+    if (DEV) {
+        log('[DEV] skip armor embed');
+        return;
+    }
+
     try {
         const armorMap = await fetchAllArmor();
         const channel = await client.channels.fetch(ARMOR_CHANNEL_ID);
+
+        // build flat list of fields (3 per member)
+        const allFields = [];
+        for (const member of guild.members.cache.values()) {
+            if (member.user.bot) continue;
+            const uid = member.id;
+            const userArmor = armorMap[uid] || {};
+
+            const clothLines = Object.values(userArmor)
+                .filter(a => a.material === 'Cloth')
+                .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
+                .join('\n') || '*(none)*';
+
+            const leatherLines = Object.values(userArmor)
+                .filter(a => a.material === 'Leather')
+                .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
+                .join('\n') || '*(none)*';
+
+            allFields.push(
+                { name: 'User', value: `<@${uid}>`, inline: true },
+                { name: '🧵 Cloth', value: clothLines, inline: true },
+                { name: '🥾 Leather', value: leatherLines, inline: true }
+            );
+        }
+
+        // chunk into pages of 25 fields
+        const pages = [];
+        for (let i = 0; i < allFields.length; i += 25) {
+            pages.push(
+                new EmbedBuilder()
+                    .setTitle('🛡️ Armor Board')
+                    .setDescription('*Cloth & Leather only*')
+                    .setColor(0x00AEFF)
+                    .setTimestamp()
+                    .addFields(allFields.slice(i, i + 25))
+            );
+        }
+        if (!pages.length) {
+            pages.push(
+                new EmbedBuilder()
+                    .setTitle('🛡️ Armor Board')
+                    .setDescription('*No members or no armor data yet.*')
+                    .setColor(0x00AEFF)
+            );
+        }
+
+        // fetch or create message
         let msg = null;
         const stored = await getMeta('armor_message_id');
         if (stored) {
@@ -238,62 +295,32 @@ async function updateArmorEmbed(guild) {
             catch { }
         }
         if (!msg) {
-            const init = new EmbedBuilder()
-                .setTitle('🛡️ Armor Board')
-                .setDescription('*Initializing…*')
-                .setColor(0x00AEFF);
-            msg = await channel.send({ embeds: [init] });
+            msg = await channel.send({ embeds: [pages[0]] });
             await setMeta('armor_message_id', msg.id);
+        } else {
+            await msg.edit({ embeds: pages });
         }
 
-        const embed = new EmbedBuilder()
-            .setTitle('🛡️ Armor Board')
-            .setColor(0x00AEFF)
-            .setTimestamp()
-            .setDescription('*Cloth & Leather only*');
-
-        for (const [uid, userArmor] of Object.entries(armorMap)) {
-            // Cloth
-            const clothLines = Object.values(userArmor)
-                .filter(a => a.material === 'Cloth')
-                .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
-                .join('\n') || '*(none)*';
-            // Leather
-            const leatherLines = Object.values(userArmor)
-                .filter(a => a.material === 'Leather')
-                .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
-                .join('\n') || '*(none)*';
-
-            embed.addFields(
-                { name: 'User', value: `<@${uid}>`, inline: true },
-                { name: '🧵 Cloth', value: clothLines, inline: true },
-                { name: '🥾 Leather', value: leatherLines, inline: true }
-            );
-
-            if (embed.data.fields.length >= 24) break;
-        }
-
-        await msg.edit({ embeds: [embed] });
-        log('[Embed] armor updated');
+        log(`[Armor] board updated across ${pages.length} embed(s)`);
     } catch (err) {
-        error('[Embed] armor error', err);
+        error('[Armor] update error', err);
     }
 }
 
-// valid rarities for a tier
+// ————————————————————————————————————————————————————————————— Utility —————————————————————————————————————————————————————————————
 const validRaritiesForTier = tier => rarities.filter((_, i) => tier >= i + 1);
 
-// handle rarity‐selects
 async function handleSelectRarity(interaction) {
     const [type, k1, k2, k3] = interaction.customId.split(':');
     const uid = interaction.user.id;
+
     if (type === 'tool') {
         const tier = parseInt(k2, 10);
         const tool = k1.replace(/_/g, ' ');
         const rarity = interaction.values[0];
         await new Promise((res, rej) => db.run(
             `INSERT INTO tools(user_id,tool,tier,rarity)
-       VALUES(?,?,?,?)
+       VALUES(?,?,?,?) 
        ON CONFLICT(user_id,tool) DO UPDATE SET
          tier=excluded.tier,rarity=excluded.rarity`,
             [uid, tool, tier, rarity],
@@ -301,12 +328,13 @@ async function handleSelectRarity(interaction) {
         ));
         await updateAssignmentEmbed(interaction.guild);
     }
+
     if (type === 'armor') {
         const material = k1, piece = k2, tier = parseInt(k3, 10);
         const rarity = interaction.values[0];
         await new Promise((res, rej) => db.run(
             `INSERT INTO armor(user_id,material,piece,tier,rarity)
-       VALUES(?,?,?,?,?)
+       VALUES(?,?,?,?,?) 
        ON CONFLICT(user_id,material,piece) DO UPDATE SET
          tier=excluded.tier,rarity=excluded.rarity`,
             [uid, material, piece, tier, rarity],
@@ -315,27 +343,31 @@ async function handleSelectRarity(interaction) {
         await updateAssignmentEmbed(interaction.guild);
         await updateArmorEmbed(interaction.guild);
     }
+
     return interaction.update({
-        content: `✅ Set **${type === 'tool' ? k1.replace(/_/g, ' ') : `${k1} ${k2}`}**!`,
+        content: `✅ Set **${type === 'tool'
+                ? k1.replace(/_/g, ' ')
+                : `${k1} ${k2}`
+            }**!`,
         embeds: [], components: []
     });
 }
 
-// create client
+// ————————————————————————————————————————————————————————————— Client & Commands —————————————————————————————————————————————————————————————
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
     partials: [Partials.GuildMember]
 });
 
-// patch client into armorBoard
-Object.defineProperty(initArmorBoard, 'client', { value: client });
-
 client.once('ready', async () => {
     log(`✅ Logged in as ${client.user.tag}`);
 
-    // register commands
     const commands = [
-        new SlashCommandBuilder().setName('setupassignments').setDescription('Initialize boards'),
+        // setup
+        new SlashCommandBuilder()
+            .setName('setupassignments').setDescription('Initialize boards'),
+
+        // professions
         new SlashCommandBuilder()
             .setName('assignmyselfto')
             .setDescription('Assign yourself to a profession')
@@ -345,6 +377,7 @@ client.once('ready', async () => {
                     .setRequired(true)
                     .addChoices(...professions.map(p => ({ name: p, value: p })))
             ),
+
         new SlashCommandBuilder()
             .setName('unassignmyselffrom')
             .setDescription('Unassign yourself from a profession')
@@ -354,12 +387,19 @@ client.once('ready', async () => {
                     .setRequired(true)
                     .addChoices(...professions.map(p => ({ name: p, value: p })))
             ),
-        new SlashCommandBuilder().setName('selectprofession').setDescription('Choose a profession'),
+
+        new SlashCommandBuilder()
+            .setName('selectprofession')
+            .setDescription('Choose a profession'),
+
+        // timer
         new SlashCommandBuilder()
             .setName('settimer')
             .setDescription('Set a timer')
             .addIntegerOption(o => o.setName('minutes').setDescription('Minutes').setRequired(true))
             .addStringOption(o => o.setName('note').setDescription('Optional note')),
+
+        // tools
         new SlashCommandBuilder()
             .setName('settool')
             .setDescription('Assign a tool + tier')
@@ -367,7 +407,7 @@ client.once('ready', async () => {
                 o.setName('tool')
                     .setDescription('Tool')
                     .setRequired(true)
-                    .addChoices(...tools.map(t => ({ name: t, value: t })))
+                    .addChoices(...toolsList.map(t => ({ name: t, value: t })))
             )
             .addStringOption(o =>
                 o.setName('tier')
@@ -375,6 +415,7 @@ client.once('ready', async () => {
                     .setRequired(true)
                     .addChoices(...tiers.map(t => ({ name: `T${t}`, value: t })))
             ),
+
         new SlashCommandBuilder()
             .setName('removetool')
             .setDescription('Remove a tool')
@@ -382,8 +423,10 @@ client.once('ready', async () => {
                 o.setName('tool')
                     .setDescription('Tool to remove')
                     .setRequired(true)
-                    .addChoices(...tools.map(t => ({ name: t, value: t })))
+                    .addChoices(...toolsList.map(t => ({ name: t, value: t })))
             ),
+
+        // armor
         new SlashCommandBuilder()
             .setName('setarmor')
             .setDescription('Assign an armor piece')
@@ -405,6 +448,7 @@ client.once('ready', async () => {
                     .setRequired(true)
                     .addChoices(...tiers.map(t => ({ name: `T${t}`, value: t })))
             ),
+
         new SlashCommandBuilder()
             .setName('removearmor')
             .setDescription('Remove an armor piece')
@@ -420,6 +464,8 @@ client.once('ready', async () => {
                     .setRequired(true)
                     .addChoices(...pieces.map(p => ({ name: p, value: p })))
             ),
+
+        // stats & info
         new SlashCommandBuilder()
             .setName('topprofession')
             .setDescription('Show top member of a profession')
@@ -429,6 +475,7 @@ client.once('ready', async () => {
                     .setRequired(true)
                     .addChoices(...professions.map(p => ({ name: p, value: p })))
             ),
+
         new SlashCommandBuilder()
             .setName('info')
             .setDescription('Show full profile info for a user')
@@ -447,6 +494,7 @@ client.once('ready', async () => {
     }
 });
 
+// ————————————————————————————————————————————————————————————— Interaction Handling —————————————————————————————————————————————————————————————
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.guild) return;
 
@@ -463,6 +511,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 .setColor(0x00AEFF);
             const msg = await ch.send({ embeds: [init] });
             await setMeta('board_message_id', msg.id);
+
             const ach = await guild.channels.fetch(ARMOR_CHANNEL_ID);
             const ainit = new EmbedBuilder()
                 .setTitle('🛡️ Armor Board')
@@ -470,6 +519,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 .setColor(0x00AEFF);
             const amsg = await ach.send({ embeds: [ainit] });
             await setMeta('armor_message_id', amsg.id);
+
             return interaction.reply({ content: '✅ Boards initialized.', ephemeral: true });
         }
 
@@ -503,21 +553,23 @@ client.on(Events.InteractionCreate, async interaction => {
 
         // settimer
         if (commandName === 'settimer') {
-            const minutes = options.getInteger('minutes');
+            const mins = options.getInteger('minutes');
             const note = options.getString('note')?.trim() || '⏰ Your timer is up!';
-            log(`[Cmd] ${user.tag} → /settimer ${minutes}min`);
-            await interaction.reply({ content: `⏳ Timer set for ${minutes} minutes.`, ephemeral: true });
+            log(`[Cmd] ${user.tag} → /settimer ${mins}min`);
+            await interaction.reply({ content: `⏳ Timer set for ${mins} minutes.`, ephemeral: true });
             setTimeout(() => {
                 interaction.channel.send({ content: `🔔 <@${user.id}> ${note}` });
                 log(`[Timer] Pinged ${user.tag}`);
-            }, minutes * 60000);
+            }, mins * 60000);
             return;
         }
 
         // selectprofession
         if (commandName === 'selectprofession') {
             log(`[Cmd] ${user.tag} → /selectprofession`);
-            const embed = new EmbedBuilder().setTitle('Choose a profession').setColor(0x00AEFF);
+            const embed = new EmbedBuilder()
+                .setTitle('Choose a profession')
+                .setColor(0x00AEFF);
             const menu = new StringSelectMenuBuilder()
                 .setCustomId('select_profession')
                 .setPlaceholder('Profession...')
@@ -535,7 +587,9 @@ client.on(Events.InteractionCreate, async interaction => {
                 .setCustomId(`tool:${tool.replace(/\s+/g, '_')}:${tier}`)
                 .setPlaceholder('Select rarity…')
                 .addOptions(valid.map(r => ({ label: `${r} T${tier}`, value: r })));
-            const embed = new EmbedBuilder().setTitle(`Choose rarity for ${tool} T${tier}`).setColor(0xFFD700);
+            const embed = new EmbedBuilder()
+                .setTitle(`Choose rarity for ${tool} T${tier}`)
+                .setColor(0xFFD700);
             return interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
         }
 
@@ -553,31 +607,33 @@ client.on(Events.InteractionCreate, async interaction => {
 
         // setarmor
         if (commandName === 'setarmor') {
-            const material = options.getString('material');
+            const mat = options.getString('material');
             const piece = options.getString('piece');
             const tier = parseInt(options.getString('tier'), 10);
-            log(`[Cmd] ${user.tag} → /setarmor ${material} ${piece} T${tier}`);
+            log(`[Cmd] ${user.tag} → /setarmor ${mat} ${piece} T${tier}`);
             const valid = validRaritiesForTier(tier);
             const menu = new StringSelectMenuBuilder()
-                .setCustomId(`armor:${material}:${piece}:${tier}`)
+                .setCustomId(`armor:${mat}:${piece}:${tier}`)
                 .setPlaceholder('Select rarity…')
                 .addOptions(valid.map(r => ({ label: `${r} T${tier}`, value: r })));
-            const embed = new EmbedBuilder().setTitle(`Choose rarity for ${material} ${piece} T${tier}`).setColor(0xFFD700);
+            const embed = new EmbedBuilder()
+                .setTitle(`Choose rarity for ${mat} ${piece} T${tier}`)
+                .setColor(0xFFD700);
             return interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
         }
 
         // removearmor
         if (commandName === 'removearmor') {
-            const material = options.getString('material');
+            const mat = options.getString('material');
             const piece = options.getString('piece');
-            log(`[Cmd] ${user.tag} → /removearmor ${material} ${piece}`);
+            log(`[Cmd] ${user.tag} → /removearmor ${mat} ${piece}`);
             await new Promise((r, j) => db.run(
                 `DELETE FROM armor WHERE user_id=? AND material=? AND piece=?`,
-                [user.id, material, piece], e => e ? j(e) : r()
+                [user.id, mat, piece], e => e ? j(e) : r()
             ));
             await updateAssignmentEmbed(guild);
             await updateArmorEmbed(guild);
-            return interaction.reply({ content: `✅ Removed ${material} ${piece}.`, ephemeral: true });
+            return interaction.reply({ content: `✅ Removed ${mat} ${piece}.`, ephemeral: true });
         }
 
         // topprofession
@@ -589,10 +645,8 @@ client.on(Events.InteractionCreate, async interaction => {
             guild.members.cache.forEach(m => {
                 const role = m.roles.cache
                     .filter(r => r.name.startsWith(`${prof} `))
-                    .sort((a, b) =>
-                        parseInt(b.name.split(' ')[1], 10) -
-                        parseInt(a.name.split(' ')[1], 10)
-                    ).first();
+                    .sort((a, b) => parseInt(b.name.split(' ')[1], 10) - parseInt(a.name.split(' ')[1], 10))
+                    .first();
                 if (role) {
                     const v = parseInt(role.name.split(' ')[1], 10);
                     if (v > lvl) { lvl = v; top = m; }
@@ -602,28 +656,27 @@ client.on(Events.InteractionCreate, async interaction => {
             return interaction.reply({ content: `🏆 Top ${prof}: ${top} – Level ${lvl}` });
         }
 
-        // info (only professions/tools; armor omitted here)
+        // info
         if (commandName === 'info') {
             const target = options.getUser('target');
             const uid = target.id;
             const avatar = target.displayAvatarURL({ dynamic: true });
 
             const assignMap = await fetchAllAssignments();
-            const userProfs = assignMap[uid] || [];
-            const mainProf = userProfs[0] || 'None';
-            const otherProfs = userProfs.slice(1);
+            const pros = assignMap[uid] || [];
+            const mainProf = pros[0] || 'None';
+            const otherProf = pros.slice(1);
 
-            const toolMap = await fetchAllTools();
-            const tmap = toolMap[uid] || {};
-            const toolList = Object.entries(tmap).map(([tool, { tier, rarity }]) => `${rarity} T${tier} ${tool}`);
+            const tmap = (await fetchAllTools())[uid] || {};
+            const toolsList = Object.entries(tmap).map(([tool, { tier, rarity }]) => `${rarity} T${tier} ${tool}`);
 
             const embed = new EmbedBuilder()
                 .setTitle(`${target.username}'s Profile`)
                 .setThumbnail(avatar)
                 .addFields(
                     { name: 'Main Profession', value: mainProf, inline: true },
-                    { name: 'Other Professions', value: otherProfs.length ? otherProfs.join(', ') : 'None', inline: true },
-                    { name: 'Tools', value: toolList.length ? toolList.join('\n') : 'None' }
+                    { name: 'Other Professions', value: otherProf.length ? otherProf.join(', ') : 'None', inline: true },
+                    { name: 'Tools', value: toolsList.length ? toolsList.join('\n') : 'None', inline: false }
                 )
                 .setColor(0x00AEFF)
                 .setTimestamp();
@@ -632,11 +685,10 @@ client.on(Events.InteractionCreate, async interaction => {
         }
     }
     else if (interaction.isStringSelectMenu()) {
-        const id = interaction.customId;
-        if (id.startsWith('tool:') || id.startsWith('armor:')) {
+        if (interaction.customId.startsWith('tool:') || interaction.customId.startsWith('armor:')) {
             return handleSelectRarity(interaction);
         }
-        if (id === 'select_profession') {
+        if (interaction.customId === 'select_profession') {
             const prof = interaction.values[0];
             log(`[Select] ${interaction.user.tag} → profession ${prof}`);
             const embed = new EmbedBuilder().setTitle(`Profession: ${prof}`).setColor(0xFFD700);
@@ -646,8 +698,8 @@ client.on(Events.InteractionCreate, async interaction => {
                 .addOptions(levels.map(l => ({ label: `Level ${l}`, value: l })));
             return interaction.update({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] });
         }
-        if (id.startsWith('select_level_')) {
-            const prof = id.replace('select_level_', '');
+        if (interaction.customId.startsWith('select_level_')) {
+            const prof = interaction.customId.replace('select_level_', '');
             const lvl = interaction.values[0];
             log(`[Select] ${interaction.user.tag} → level ${lvl} for ${prof}`);
             const mem = await interaction.guild.members.fetch(interaction.user.id);
@@ -670,6 +722,29 @@ client.on(Events.InteractionCreate, async interaction => {
             return interaction.update({ content: `✅ Assigned **${prof} ${lvl}**!`, embeds: [], components: [] });
         }
     }
+});
+
+// ————————————————————————————————————————————————————————————— Welcome & Sync —————————————————————————————————————————————————————————————
+client.on(Events.GuildMemberAdd, async member => {
+    // welcome embed
+    try {
+        const channel = await member.guild.channels.fetch(WELCOME_CHANNEL_ID);
+        if (channel?.isTextBased()) {
+            const embed = new EmbedBuilder()
+                .setTitle('🎉 Welcome to Lich-core Dominion!')
+                .setDescription(`Hey ${member}, we’re glad you’re here!\n\nChoose your profession with \`/selectprofession\` and become part of the community.`)
+                .setColor(0x00AEFF)
+                .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+                .setFooter({ text: `Member #${member.guild.memberCount} • ${new Date().toLocaleDateString()}` });
+            await channel.send({ embeds: [embed] });
+            log(`[Welcome] Sent welcome for ${member.user.tag}`);
+        }
+    } catch (err) {
+        error('[Welcome] error', err);
+    }
+
+    // sync armor board so new member appears immediately
+    await updateArmorEmbed(member.guild);
 });
 
 client.login(TOKEN);
