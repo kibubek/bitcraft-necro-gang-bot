@@ -242,25 +242,44 @@ async function updateArmorEmbed(guild) {
         // 1) load saved armor
         const armorMap = await fetchAllArmor();
 
-        // 2) collect all non-bot member IDs
-        const members = guild.members.cache
-            .filter(m => !m.user.bot)
-            .map(m => m.id);
+        // 2) only include users who have >0 armor entries
+        const usersWithArmor = Object.keys(armorMap);
+        if (usersWithArmor.length === 0) {
+            // nothing to show
+            const placeholder = new EmbedBuilder()
+                .setTitle('🛡️ Armor Board')
+                .setDescription('*No one has set any armor yet.*')
+                .setColor(0x00AEFF);
+            // fetch/create and send/edit a single-page placeholder:
+            const channel = await client.channels.fetch(ARMOR_CHANNEL_ID);
+            let msg = null;
+            const stored = await getMeta('armor_message_id');
+            if (stored) {
+                try { msg = await channel.messages.fetch(stored); }
+                catch { }
+            }
+            if (!msg) {
+                msg = await channel.send({ embeds: [placeholder] });
+                await setMeta('armor_message_id', msg.id);
+            } else {
+                await msg.edit({ embeds: [placeholder] });
+            }
+            return log('[Armor] no entries, placeholder sent');
+        }
 
-        // 3) define how many users per embed
+        // 3) paginate by 8 users per page (8×3 = 24 fields)
         const USERS_PER_PAGE = 8;
         const pages = [];
 
-        for (let i = 0; i < members.length; i += USERS_PER_PAGE) {
-            const page = new EmbedBuilder()
+        for (let i = 0; i < usersWithArmor.length; i += USERS_PER_PAGE) {
+            const embed = new EmbedBuilder()
                 .setTitle('🛡️ Armor Board')
                 .setDescription('*Cloth & Leather only*')
                 .setColor(0x00AEFF)
                 .setTimestamp();
 
-            // for each user in this slice, add exactly 3 fields
-            for (const uid of members.slice(i, i + USERS_PER_PAGE)) {
-                const userArmor = armorMap[uid] || {};
+            for (const uid of usersWithArmor.slice(i, i + USERS_PER_PAGE)) {
+                const userArmor = armorMap[uid];
 
                 const cloth = Object.values(userArmor)
                     .filter(a => a.material === 'Cloth')
@@ -272,33 +291,23 @@ async function updateArmorEmbed(guild) {
                     .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
                     .join('\n') || '*(none)*';
 
-                page.addFields(
+                embed.addFields(
                     { name: 'User', value: `<@${uid}>`, inline: true },
                     { name: '🧵 Cloth', value: cloth, inline: true },
                     { name: '🥾 Leather', value: leather, inline: true }
                 );
             }
 
-            pages.push(page);
+            pages.push(embed);
         }
 
-        // if no human members at all, show a single placeholder
-        if (pages.length === 0) {
-            pages.push(
-                new EmbedBuilder()
-                    .setTitle('🛡️ Armor Board')
-                    .setDescription('*No members or no armor data yet.*')
-                    .setColor(0x00AEFF)
-            );
-        }
-
-        // 4) fetch/create the board message, then edit with all pages
+        // 4) fetch/create & edit the message
         const channel = await client.channels.fetch(ARMOR_CHANNEL_ID);
         let msg = null;
         const stored = await getMeta('armor_message_id');
         if (stored) {
             try { msg = await channel.messages.fetch(stored); }
-            catch { /* will recreate below */ }
+            catch { }
         }
         if (!msg) {
             msg = await channel.send({ embeds: [pages[0]] });
@@ -312,6 +321,7 @@ async function updateArmorEmbed(guild) {
         error('[Armor] update error', err);
     }
 }
+
 
 
 // ————————————————————————————————————————————————————————————— Utility —————————————————————————————————————————————————————————————
