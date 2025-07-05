@@ -766,7 +766,7 @@ client.on(Events.GuildMemberAdd, async member => {
     // welcome embed
     try {
         const channel = await member.guild.channels.fetch(WELCOME_CHANNEL_ID);
-        if (channel?.isTextBased()) {
+        if (channel) {
             const embed = new EmbedBuilder()
                 .setTitle('🎉 Welcome to Lich-core Dominion!')
                 .setDescription(`Hey ${member}, we’re glad you’re here!\n\nChoose your profession with \`/selectprofession\` and become part of the community.`)
