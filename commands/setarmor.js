@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, StringSelectMenuBuilder, ActionRowBuilder } = require('discord.js');
 const { materials, pieces, tiers, validRaritiesForTier } = require('../constants');
+const { log } = require('../logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -27,6 +28,7 @@ module.exports = {
         const mat = interaction.options.getString('material');
         const piece = interaction.options.getString('piece');
         const tier = parseInt(interaction.options.getString('tier'), 10);
+        log(`[Cmd] ${interaction.user.tag} → /setarmor ${mat} ${piece} T${tier}`);
         const valid = validRaritiesForTier(tier);
         const menu = new StringSelectMenuBuilder()
             .setCustomId(`armor:${mat}:${piece}:${tier}`)

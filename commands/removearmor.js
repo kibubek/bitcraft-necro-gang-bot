@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const { materials, pieces } = require('../constants');
 const { db } = require('../db');
 const { updateAssignmentEmbed, updateArmorEmbed } = require('../boards');
+const { log } = require('../logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -22,6 +23,7 @@ module.exports = {
     async execute(interaction) {
         const mat = interaction.options.getString('material');
         const piece = interaction.options.getString('piece');
+        log(`[Cmd] ${interaction.user.tag} → /removearmor ${mat} ${piece}`);
         await new Promise((r, j) => db.run(
             `DELETE FROM armor WHERE user_id=? AND material=? AND piece=?`,
             [interaction.user.id, mat, piece], e => e ? j(e) : r()

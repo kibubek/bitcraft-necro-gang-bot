@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, StringSelectMenuBuilder, ActionRowBuilder } = require('discord.js');
 const { toolsList, tiers, validRaritiesForTier } = require('../constants');
+const { log } = require('../logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -20,6 +21,7 @@ module.exports = {
     async execute(interaction) {
         const tool = interaction.options.getString('tool');
         const tier = parseInt(interaction.options.getString('tier'), 10);
+        log(`[Cmd] ${interaction.user.tag} → /settool ${tool} T${tier}`);
         const valid = validRaritiesForTier(tier);
         const menu = new StringSelectMenuBuilder()
             .setCustomId(`tool:${tool.replace(/\s+/g, '_')}:${tier}`)

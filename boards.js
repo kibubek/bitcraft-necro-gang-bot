@@ -1,4 +1,5 @@
 const { EmbedBuilder } = require('discord.js');
+const { log, error } = require('./logger');
 const { fetchAllAssignments, fetchAllTools, fetchAllArmor, getMeta, setMeta, DEV } = require('./db');
 const { professions, rarities } = require('./constants');
 
@@ -8,7 +9,7 @@ const professionToolMap = require('./constants').professionToolMap;
 
 async function updateAssignmentEmbed(client, guild) {
     if (DEV) {
-        console.log('[DEV] skip assignment embed');
+        log('[DEV] skip assignment embed');
         return;
     }
 
@@ -75,15 +76,15 @@ async function updateAssignmentEmbed(client, guild) {
         }
 
         await msg.edit({ embeds });
-        console.log(`[Embed] assignment updated (${embeds.length} pages)`);
+        log(`[Embed] assignment updated (${embeds.length} pages)`);
     } catch (err) {
-        console.error('[Embed] assignment error', err);
+        error('[Embed] assignment error', err);
     }
 }
 
 async function updateArmorEmbed(client, guild) {
     if (DEV) {
-        console.log('[DEV] skipping armor embed');
+        log('[DEV] skipping armor embed');
         return;
     }
 
@@ -146,9 +147,9 @@ async function updateArmorEmbed(client, guild) {
         }
 
         await msg.edit({ embeds: pages });
-        console.log(`[Armor] board updated across ${pages.length} embed(s)`);
+        log(`[Armor] board updated across ${pages.length} embed(s)`);
     } catch (err) {
-        console.error('[Armor] update error', err);
+        error('[Armor] update error', err);
     }
 }
 

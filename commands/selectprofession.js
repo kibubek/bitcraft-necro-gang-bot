@@ -1,11 +1,13 @@
 const { SlashCommandBuilder, EmbedBuilder, StringSelectMenuBuilder, ActionRowBuilder } = require('discord.js');
 const { professions } = require('../constants');
+const { log } = require('../logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('selectprofession')
         .setDescription('Choose a profession'),
     async execute(interaction) {
+        log(`[Cmd] ${interaction.user.tag} → /selectprofession`);
         const embed = new EmbedBuilder()
             .setTitle('Choose a profession')
             .setColor(0x00AEFF);

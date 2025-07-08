@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { fetchAllAssignments, fetchAllTools } = require('../db');
+const { log } = require('../logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -12,6 +13,7 @@ module.exports = {
         ),
     async execute(interaction) {
         const target = interaction.options.getUser('target');
+        log(`[Cmd] ${interaction.user.tag} → /info ${target.tag}`);
         const uid = target.id;
         const avatar = target.displayAvatarURL({ dynamic: true });
 

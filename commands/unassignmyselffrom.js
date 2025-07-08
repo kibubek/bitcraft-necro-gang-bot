@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const { professions } = require('../constants');
 const { db } = require('../db');
 const { updateAssignmentEmbed } = require('../boards');
+const { log } = require('../logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -15,6 +16,7 @@ module.exports = {
         ),
     async execute(interaction) {
         const prof = interaction.options.getString('profession');
+        log(`[Cmd] ${interaction.user.tag} → /unassignmyselffrom ${prof}`);
         await new Promise((r, j) => db.run(
             `DELETE FROM assignments WHERE user_id=? AND profession=?`,
             [interaction.user.id, prof], e => e ? j(e) : r()

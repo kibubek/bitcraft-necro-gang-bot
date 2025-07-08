@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const { toolsList } = require('../constants');
 const { db } = require('../db');
 const { updateAssignmentEmbed } = require('../boards');
+const { log } = require('../logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -15,6 +16,7 @@ module.exports = {
         ),
     async execute(interaction) {
         const tool = interaction.options.getString('tool');
+        log(`[Cmd] ${interaction.user.tag} → /removetool ${tool}`);
         await new Promise((r, j) => db.run(
             `DELETE FROM tools WHERE user_id=? AND tool=?`,
             [interaction.user.id, tool], e => e ? j(e) : r()

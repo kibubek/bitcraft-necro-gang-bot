@@ -1,11 +1,13 @@
 const { db } = require('../db');
 const { updateAssignmentEmbed, updateArmorEmbed } = require('../boards');
+const { log } = require('../logger');
 
 module.exports = {
     match: i => i.isStringSelectMenu() && (i.customId.startsWith('tool:') || i.customId.startsWith('armor:')),
     async execute(interaction) {
         const [type, k1, k2, k3] = interaction.customId.split(':');
         const uid = interaction.user.id;
+        log(`[Select] ${interaction.user.tag} → ${interaction.customId}`);
 
         if (type === 'tool') {
             const tier = parseInt(k2, 10);

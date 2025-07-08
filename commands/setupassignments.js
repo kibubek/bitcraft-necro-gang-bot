@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { setMeta } = require('../db');
+const { log } = require('../logger');
 
 const ASSIGNMENT_CHANNEL_ID = process.env.ASSIGNMENT_CHANNEL_ID;
 const ARMOR_CHANNEL_ID = process.env.ARMOR_CHANNEL_ID;
@@ -9,6 +10,7 @@ module.exports = {
         .setName('setupassignments')
         .setDescription('Initialize boards'),
     async execute(interaction) {
+        log(`[Cmd] ${interaction.user.tag} → /setupassignments`);
         const guild = interaction.guild;
         const ch = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
         const init = new EmbedBuilder()

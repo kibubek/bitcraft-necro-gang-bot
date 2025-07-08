@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { professions } = require('../constants');
+const { log } = require('../logger');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -13,6 +14,7 @@ module.exports = {
         ),
     async execute(interaction) {
         const prof = interaction.options.getString('profession');
+        log(`[Cmd] ${interaction.user.tag} → /topprofession ${prof}`);
 
         await interaction.guild.members.fetch();
         const candidates = interaction.guild.members.cache
