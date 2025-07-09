@@ -1,6 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { log, error } = require('./logger');
-const { fetchAllAssignments, fetchAllTools, fetchAllArmor, getMeta, setMeta, DEV } = require('./db');
+const { fetchAllAssignments, fetchAllTools, fetchAllArmor, fetchAllRings, fetchAllHearts, getMeta, setMeta, DEV } = require('./db');
 const { professions, rarities } = require('./constants');
 
 const ASSIGNMENT_CHANNEL_ID = process.env.ASSIGNMENT_CHANNEL_ID;
@@ -89,7 +89,11 @@ async function updateArmorEmbed(client, guild) {
     }
 
     try {
-        const armorMap = await fetchAllArmor();
+        const [armorMap, ringMap, heartMap] = await Promise.all([
+            fetchAllArmor(),
+            fetchAllRings(),
+            fetchAllHearts()
+        ]);
         const channel = await client.channels.fetch(ARMOR_CHANNEL_ID);
         let msg;
         const stored = await getMeta('armor_message_id');
@@ -107,7 +111,13 @@ async function updateArmorEmbed(client, guild) {
         }
 
         const allFields = [];
-        for (const [uid, userArmor] of Object.entries(armorMap)) {
+        const userIds = new Set([
+            ...Object.keys(armorMap),
+            ...Object.keys(ringMap),
+            ...Object.keys(heartMap)
+        ]);
+        for (const uid of userIds) {
+            const userArmor = armorMap[uid] || {};
             const cloth = Object.values(userArmor)
                 .filter(a => a.material === 'Cloth')
                 .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
@@ -118,8 +128,11 @@ async function updateArmorEmbed(client, guild) {
                 .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
                 .join('\n') || '*(none)*';
 
+            const ring = ringMap[uid] ? `T${ringMap[uid].tier}` : '*(none)*';
+            const heart = heartMap[uid] ? `T${heartMap[uid].tier}` : '*(none)*';
+
             allFields.push(
-                { name: 'User', value: `<@${uid}>`, inline: true },
+                { name: 'User', value: `<@${uid}>\nRing: ${ring}\nHeart: ${heart}`, inline: true },
                 { name: '🧵 Cloth', value: cloth, inline: true },
                 { name: '🥾 Leather', value: leather, inline: true }
             );
@@ -130,7 +143,7 @@ async function updateArmorEmbed(client, guild) {
             const slice = allFields.slice(i, i + 25);
             const embed = new EmbedBuilder()
                 .setTitle('🛡️ Armor Board')
-                .setDescription('*Cloth & Leather only*')
+                .setDescription('*Cloth, Leather, Rings & Hearts*')
                 .setColor(0x00AEFF)
                 .setTimestamp()
                 .addFields(slice);
@@ -141,7 +154,7 @@ async function updateArmorEmbed(client, guild) {
             pages.push(
                 new EmbedBuilder()
                     .setTitle('🛡️ Armor Board')
-                    .setDescription('*No Cloth or Leather set yet.*')
+                    .setDescription('*No armor, rings or hearts set yet.*')
                     .setColor(0x00AEFF)
             );
         }

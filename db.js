@@ -37,6 +37,18 @@ db.serialize(() => {
     )
   `);
     db.run(`
+    CREATE TABLE IF NOT EXISTS rings (
+      user_id TEXT PRIMARY KEY,
+      tier    INTEGER NOT NULL
+    )
+  `);
+    db.run(`
+    CREATE TABLE IF NOT EXISTS hearts (
+      user_id TEXT PRIMARY KEY,
+      tier    INTEGER NOT NULL
+    )
+  `);
+    db.run(`
     CREATE TABLE IF NOT EXISTS meta (
       key   TEXT PRIMARY KEY,
       value TEXT
@@ -91,6 +103,28 @@ function fetchAllArmor() {
     });
 }
 
+function fetchAllRings() {
+    return new Promise((res, rej) => {
+        db.all(`SELECT user_id, tier FROM rings`, [], (e, rows) => {
+            if (e) return rej(e);
+            const m = {};
+            rows.forEach(r => { m[r.user_id] = { tier: r.tier }; });
+            res(m);
+        });
+    });
+}
+
+function fetchAllHearts() {
+    return new Promise((res, rej) => {
+        db.all(`SELECT user_id, tier FROM hearts`, [], (e, rows) => {
+            if (e) return rej(e);
+            const m = {};
+            rows.forEach(r => { m[r.user_id] = { tier: r.tier }; });
+            res(m);
+        });
+    });
+}
+
 function getMeta(key) {
     return new Promise((res, rej) => {
         db.get(`SELECT value FROM meta WHERE key = ?`, [key], (e, row) => {
@@ -116,6 +150,8 @@ module.exports = {
     fetchAllAssignments,
     fetchAllTools,
     fetchAllArmor,
+    fetchAllRings,
+    fetchAllHearts,
     getMeta,
     setMeta,
     DEV
