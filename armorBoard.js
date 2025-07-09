@@ -71,10 +71,10 @@ module.exports = function initArmorBoard({ client, db, DEV, ARMOR_CHANNEL_ID, ge
                 );
             }
 
-            // chunk into groups of 25
+            // chunk into groups of 24 (8 user rows) to avoid splitting a row across pages
             const pages = [];
-            for (let i = 0; i < allFields.length; i += 25) {
-                const slice = allFields.slice(i, i + 25);
+            for (let i = 0; i < allFields.length; i += 24) {
+                const slice = allFields.slice(i, i + 24);
                 const embed = new EmbedBuilder()
                     .setTitle('🛡️ Armor Board')
                     .setDescription('*Cloth & Leather only*')
