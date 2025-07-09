@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { fetchAllAssignments, fetchAllTools } = require('../db');
+const { fetchAllAssignments, fetchAllTools, fetchAllArmor, fetchAllRings, fetchAllHearts } = require('../db');
+const { professions } = require('../constants');
 const { log } = require('../logger');
 
 module.exports = {
@@ -17,21 +18,47 @@ module.exports = {
         const uid = target.id;
         const avatar = target.displayAvatarURL({ dynamic: true });
 
-        const assignMap = await fetchAllAssignments();
-        const pros = assignMap[uid] || [];
-        const mainProf = pros[0] || 'None';
-        const otherProf = pros.slice(1);
+        const [assignMap, toolMap, armorMap, ringMap, heartMap] = await Promise.all([
+            fetchAllAssignments(),
+            fetchAllTools(),
+            fetchAllArmor(),
+            fetchAllRings(),
+            fetchAllHearts()
+        ]);
 
-        const tmap = (await fetchAllTools())[uid] || {};
-        const toolsList = Object.entries(tmap).map(([tool, { tier, rarity }]) => `${rarity} T${tier} ${tool}`);
+        const pros = assignMap[uid] || [];
+        const focusedText = pros.length ? pros.join(', ') : 'None';
+
+        const tmap = toolMap[uid] || {};
+        const toolsList = Object.entries(tmap)
+            .map(([tool, { tier, rarity }]) => `${rarity} T${tier} ${tool}`);
+
+        const armors = Object.values(armorMap[uid] || {})
+            .map(a => `${a.material} ${a.piece}: ${a.rarity} T${a.tier}`);
+
+        const ringText = ringMap[uid] ? `T${ringMap[uid].tier}` : 'None';
+        const heartText = heartMap[uid] ? `T${heartMap[uid].tier}` : 'None';
+
+        const member = await interaction.guild.members.fetch(uid);
+        const profLevels = professions
+            .map(p => {
+                const role = member.roles.cache.find(r => r.name.startsWith(`${p} `));
+                if (!role) return null;
+                const lvl = role.name.split(' ')[1];
+                return `${p} ${lvl}`;
+            })
+            .filter(Boolean);
 
         const embed = new EmbedBuilder()
             .setTitle(`${target.username}'s Profile`)
             .setThumbnail(avatar)
             .addFields(
-                { name: 'Main Profession', value: mainProf, inline: true },
-                { name: 'Other Professions', value: otherProf.length ? otherProf.join(', ') : 'None', inline: true },
-                { name: 'Tools', value: toolsList.length ? toolsList.join('\n') : 'None', inline: false }
+                { name: 'Focused Professions', value: focusedText, inline: false },
+                { name: 'Profession Levels', value: profLevels.length ? profLevels.join(', ') : 'None', inline: false },
+                { name: 'Tools', value: toolsList.length ? toolsList.join('\n') : 'None', inline: false },
+                { name: 'Ring', value: ringText, inline: true },
+                { name: 'Heart', value: heartText, inline: true },
+                { name: 'Armor', value: armors.length ? armors.join('\n') : 'None', inline: false }
             )
             .setColor(0x00AEFF)
             .setTimestamp();
