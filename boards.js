@@ -34,16 +34,40 @@ async function updateAssignmentEmbed(client, guild) {
             await setMeta('board_message_id', msg.id);
         }
 
-        const sections = professions.map(prof => {
+        const embeds = [];
+        let cur = new EmbedBuilder().setTitle('📋 Assigned Professions').setColor(0x00AEFF);
+        let buf = '';
+        const MAX = 3000; // stay well under Discord's 4096 char limit
+
+        function pushPage() {
+            cur.setDescription(buf.trim());
+            embeds.push(cur);
+            cur = new EmbedBuilder()
+                .setTitle('📋 Assigned Professions (cont’d)')
+                .setColor(0x00AEFF);
+            buf = '';
+        }
+
+        for (const prof of professions) {
             const users = Object.entries(assignMap)
                 .filter(([, ps]) => ps.includes(prof))
                 .map(([uid]) => uid);
-            if (!users.length) return `### ${prof}\n*No one assigned*`;
+
+            const header = `### ${prof}\n`;
+            if (buf.length + header.length > MAX) pushPage();
+            buf += header;
+
+            if (!users.length) {
+                const entry = '*No one assigned*\n\n';
+                if (buf.length + entry.length > MAX) pushPage(), buf += header;
+                buf += entry;
+                continue;
+            }
 
             const toolName = professionToolMap[prof];
-            const lines = users.map(uid => {
+            for (const uid of users) {
                 const m = guild.members.cache.get(uid);
-                if (!m) return null;
+                if (!m) continue;
                 const role = m.roles.cache.find(r => r.name.startsWith(`${prof}`));
                 const profText = role ? role.name : prof;
                 let toolText = '';
@@ -51,26 +75,19 @@ async function updateAssignmentEmbed(client, guild) {
                     const { tier, rarity } = toolMap[uid][toolName];
                     toolText = ` – ${rarity} T${tier} ${toolName}`;
                 }
-                return `- <@${uid}> – ${profText}${toolText}`;
-            }).filter(Boolean);
-
-            return `### ${prof}\n${lines.join('\n')}`;
-        });
-
-        const embeds = [];
-        let cur = new EmbedBuilder().setTitle('📋 Assigned Professions').setColor(0x00AEFF);
-        let buf = '';
-        const MAX = 3000;
-        for (const sec of sections) {
-            if (buf.length + sec.length > MAX) {
-                cur.setDescription(buf.trim());
-                embeds.push(cur);
-                cur = new EmbedBuilder().setTitle('📋 Assigned Professions (cont’d)').setColor(0x00AEFF);
-                buf = '';
+                const line = `- <@${uid}> – ${profText}${toolText}\n`;
+                if (buf.length + line.length > MAX) {
+                    pushPage();
+                    buf += header;
+                }
+                buf += line;
             }
-            buf += sec + '\n\n';
+
+            if (buf.length + 1 > MAX) pushPage(), buf += header; // space before next section
+            buf += '\n';
         }
-        if (buf) {
+
+        if (buf.trim()) {
             cur.setDescription(buf.trim());
             embeds.push(cur);
         }
