@@ -19,6 +19,7 @@ module.exports = {
             .setColor(0x00AEFF);
         const msg = await ch.send({ embeds: [init] });
         await setMeta('board_message_id', msg.id);
+        await setMeta('board_message_ids', JSON.stringify([msg.id]));
 
         const ach = await guild.channels.fetch(ARMOR_CHANNEL_ID);
         const ainit = new EmbedBuilder()

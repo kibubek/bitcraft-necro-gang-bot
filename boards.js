@@ -19,19 +19,28 @@ async function updateAssignmentEmbed(client, guild) {
             fetchAllTools()
         ]);
         const channel = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
-        let msg = null;
-        const stored = await getMeta('board_message_id');
-        if (stored) {
-            try { msg = await channel.messages.fetch(stored); }
-            catch { }
+        const storedMulti = await getMeta('board_message_ids');
+        const storedSingle = await getMeta('board_message_id');
+        let ids = [];
+        if (storedMulti) {
+            try { ids = JSON.parse(storedMulti); } catch { ids = []; }
+        } else if (storedSingle) {
+            ids = [storedSingle];
         }
-        if (!msg) {
+        const messages = [];
+        for (const id of ids) {
+            try {
+                const m = await channel.messages.fetch(id);
+                messages.push(m);
+            } catch { }
+        }
+        if (messages.length === 0) {
             const init = new EmbedBuilder()
                 .setTitle('📋 Assigned Professions')
                 .setDescription('*Initializing…*')
                 .setColor(0x00AEFF);
-            msg = await channel.send({ embeds: [init] });
-            await setMeta('board_message_id', msg.id);
+            const m = await channel.send({ embeds: [init] });
+            messages.push(m);
         }
 
         const embeds = [];
@@ -92,7 +101,24 @@ async function updateAssignmentEmbed(client, guild) {
             embeds.push(cur);
         }
 
-        await msg.edit({ embeds });
+        const newIds = [];
+        for (let i = 0; i < embeds.length; i++) {
+            const embed = embeds[i];
+            if (messages[i]) {
+                await messages[i].edit({ embeds: [embed] });
+            } else {
+                const m = await channel.send({ embeds: [embed] });
+                messages.push(m);
+            }
+            newIds.push(messages[i].id);
+        }
+
+        for (let i = embeds.length; i < messages.length; i++) {
+            try { await messages[i].delete(); } catch { }
+        }
+
+        await setMeta('board_message_ids', JSON.stringify(newIds));
+        await setMeta('board_message_id', newIds[0]);
         log(`[Embed] assignment updated (${embeds.length} pages)`);
     } catch (err) {
         error('[Embed] assignment error', err);
