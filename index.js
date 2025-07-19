@@ -13,7 +13,7 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
     partials: [Partials.GuildMember]
 });
-
+//TEST
 // Load commands
 const commands = new Map();
 for (const file of fs.readdirSync(path.join(__dirname, 'commands')).filter(f => f.endsWith('.js'))) {
