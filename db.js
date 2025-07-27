@@ -11,33 +11,12 @@ const db = new sqlite3.Database(DB_PATH, err => {
 
 db.serialize(() => {
     db.run(`
-    CREATE TABLE IF NOT EXISTS assignments (
-      user_id    TEXT NOT NULL,
-      profession TEXT NOT NULL,
-      PRIMARY KEY (user_id, profession)
-    )
-  `);
-    db.run(`
     CREATE TABLE IF NOT EXISTS meta (
       key   TEXT PRIMARY KEY,
       value TEXT
     )
   `);
 });
-
-function fetchAllAssignments() {
-    return new Promise((res, rej) => {
-        db.all(`SELECT user_id, profession FROM assignments`, [], (e, rows) => {
-            if (e) return rej(e);
-            const m = {};
-            rows.forEach(r => {
-                m[r.user_id] = m[r.user_id] || [];
-                m[r.user_id].push(r.profession);
-            });
-            res(m);
-        });
-    });
-}
 
 
 function getMeta(key) {
@@ -62,7 +41,6 @@ function setMeta(key, value) {
 
 module.exports = {
     db,
-    fetchAllAssignments,
     getMeta,
     setMeta,
     DEV

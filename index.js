@@ -3,7 +3,6 @@ const fs = require('fs');
 const path = require('path');
 const { Client, GatewayIntentBits, Partials, Events, EmbedBuilder } = require('discord.js');
 const { updateAssignmentEmbed } = require('./boards');
-const { db } = require('./db');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID;
@@ -57,17 +56,6 @@ client.on(Events.GuildMemberAdd, async member => {
 
 client.on(Events.GuildMemberRemove, async member => {
     log(`[Depart] Member left: ${member.user.tag}`);
-    const uid = member.id;
-    try {
-        const queries = [
-            'DELETE FROM assignments WHERE user_id=?'
-        ];
-        for (const q of queries) {
-            await new Promise((res, rej) => db.run(q, [uid], e => e ? rej(e) : res()));
-        }
-    } catch (err) {
-        error('[Depart] DB cleanup error', err);
-    }
     await updateAssignmentEmbed(client, member.guild);
     log('[Depart] Boards updated');
 });

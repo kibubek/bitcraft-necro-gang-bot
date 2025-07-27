@@ -1,6 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { log, error } = require('./logger');
-const { fetchAllAssignments, getMeta, setMeta, DEV } = require('./db');
+const { getMeta, setMeta, DEV } = require('./db');
 const { professions } = require('./constants');
 
 const ASSIGNMENT_CHANNEL_ID = process.env.ASSIGNMENT_CHANNEL_ID;
@@ -12,7 +12,16 @@ async function updateAssignmentEmbed(client, guild) {
     }
 
     try {
-        const assignMap = await fetchAllAssignments();
+        const assignMap = {};
+        for (const member of guild.members.cache.values()) {
+            for (const prof of professions) {
+                if (member.roles.cache.some(r => r.name === prof)) {
+                    assignMap[member.id] = assignMap[member.id] || [];
+                    assignMap[member.id].push(prof);
+                }
+            }
+        }
+
         const channel = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
         let msg = null;
         const stored = await getMeta('board_message_id');
