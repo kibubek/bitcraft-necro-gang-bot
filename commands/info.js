@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { professions } = require('../constants');
 const { fetchAllAssignments } = require('../db');
 const { log } = require('../logger');
 
@@ -16,6 +17,8 @@ module.exports = {
         log(`[Cmd] ${interaction.user.tag} → /info ${target.tag}`);
         const uid = target.id;
         const avatar = target.displayAvatarURL({ dynamic: true });
+        const member = await interaction.guild.members.fetch(uid);
+        const pros = professions.filter(p => member.roles.cache.some(r => r.name === p));
 
         const assignMap = await fetchAllAssignments();
 
