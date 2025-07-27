@@ -11,44 +11,6 @@ const db = new sqlite3.Database(DB_PATH, err => {
 
 db.serialize(() => {
     db.run(`
-    CREATE TABLE IF NOT EXISTS assignments (
-      user_id    TEXT NOT NULL,
-      profession TEXT NOT NULL,
-      PRIMARY KEY (user_id, profession)
-    )
-  `);
-    db.run(`
-    CREATE TABLE IF NOT EXISTS tools (
-      user_id TEXT NOT NULL,
-      tool    TEXT NOT NULL,
-      tier    INTEGER NOT NULL,
-      rarity  TEXT NOT NULL,
-      PRIMARY KEY (user_id, tool)
-    )
-  `);
-    db.run(`
-    CREATE TABLE IF NOT EXISTS armor (
-      user_id  TEXT NOT NULL,
-      material TEXT NOT NULL,
-      piece    TEXT NOT NULL,
-      tier     INTEGER NOT NULL,
-      rarity   TEXT NOT NULL,
-      PRIMARY KEY (user_id, material, piece)
-    )
-  `);
-    db.run(`
-    CREATE TABLE IF NOT EXISTS rings (
-      user_id TEXT PRIMARY KEY,
-      tier    INTEGER NOT NULL
-    )
-  `);
-    db.run(`
-    CREATE TABLE IF NOT EXISTS hearts (
-      user_id TEXT PRIMARY KEY,
-      tier    INTEGER NOT NULL
-    )
-  `);
-    db.run(`
     CREATE TABLE IF NOT EXISTS meta (
       key   TEXT PRIMARY KEY,
       value TEXT
@@ -56,74 +18,6 @@ db.serialize(() => {
   `);
 });
 
-function fetchAllAssignments() {
-    return new Promise((res, rej) => {
-        db.all(`SELECT user_id, profession FROM assignments`, [], (e, rows) => {
-            if (e) return rej(e);
-            const m = {};
-            rows.forEach(r => {
-                m[r.user_id] = m[r.user_id] || [];
-                m[r.user_id].push(r.profession);
-            });
-            res(m);
-        });
-    });
-}
-
-function fetchAllTools() {
-    return new Promise((res, rej) => {
-        db.all(`SELECT user_id, tool, tier, rarity FROM tools`, [], (e, rows) => {
-            if (e) return rej(e);
-            const m = {};
-            rows.forEach(r => {
-                m[r.user_id] = m[r.user_id] || {};
-                m[r.user_id][r.tool] = { tier: r.tier, rarity: r.rarity };
-            });
-            res(m);
-        });
-    });
-}
-
-function fetchAllArmor() {
-    return new Promise((res, rej) => {
-        db.all(`SELECT user_id, material, piece, tier, rarity FROM armor`, [], (e, rows) => {
-            if (e) return rej(e);
-            const m = {};
-            rows.forEach(r => {
-                m[r.user_id] = m[r.user_id] || {};
-                m[r.user_id][`${r.material}:${r.piece}`] = {
-                    material: r.material,
-                    piece: r.piece,
-                    tier: r.tier,
-                    rarity: r.rarity
-                };
-            });
-            res(m);
-        });
-    });
-}
-
-function fetchAllRings() {
-    return new Promise((res, rej) => {
-        db.all(`SELECT user_id, tier FROM rings`, [], (e, rows) => {
-            if (e) return rej(e);
-            const m = {};
-            rows.forEach(r => { m[r.user_id] = { tier: r.tier }; });
-            res(m);
-        });
-    });
-}
-
-function fetchAllHearts() {
-    return new Promise((res, rej) => {
-        db.all(`SELECT user_id, tier FROM hearts`, [], (e, rows) => {
-            if (e) return rej(e);
-            const m = {};
-            rows.forEach(r => { m[r.user_id] = { tier: r.tier }; });
-            res(m);
-        });
-    });
-}
 
 function getMeta(key) {
     return new Promise((res, rej) => {
@@ -147,11 +41,6 @@ function setMeta(key, value) {
 
 module.exports = {
     db,
-    fetchAllAssignments,
-    fetchAllTools,
-    fetchAllArmor,
-    fetchAllRings,
-    fetchAllHearts,
     getMeta,
     setMeta,
     DEV

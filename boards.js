@@ -1,11 +1,9 @@
 const { EmbedBuilder } = require('discord.js');
 const { log, error } = require('./logger');
-const { fetchAllAssignments, fetchAllTools, fetchAllArmor, fetchAllRings, fetchAllHearts, getMeta, setMeta, DEV } = require('./db');
-const { professions, rarities } = require('./constants');
+const { getMeta, setMeta, DEV } = require('./db');
+const { professions } = require('./constants');
 
 const ASSIGNMENT_CHANNEL_ID = process.env.ASSIGNMENT_CHANNEL_ID;
-const ARMOR_CHANNEL_ID = process.env.ARMOR_CHANNEL_ID;
-const professionToolMap = require('./constants').professionToolMap;
 
 async function updateAssignmentEmbed(client, guild) {
     if (DEV) {
@@ -14,10 +12,16 @@ async function updateAssignmentEmbed(client, guild) {
     }
 
     try {
-        const [assignMap, toolMap] = await Promise.all([
-            fetchAllAssignments(),
-            fetchAllTools()
-        ]);
+        const assignMap = {};
+        for (const member of guild.members.cache.values()) {
+            for (const prof of professions) {
+                if (member.roles.cache.some(r => r.name === prof)) {
+                    assignMap[member.id] = assignMap[member.id] || [];
+                    assignMap[member.id].push(prof);
+                }
+            }
+        }
+
         const channel = await guild.channels.fetch(ASSIGNMENT_CHANNEL_ID);
         let msg = null;
         const stored = await getMeta('board_message_id');
@@ -64,18 +68,12 @@ async function updateAssignmentEmbed(client, guild) {
                 continue;
             }
 
-            const toolName = professionToolMap[prof];
             for (const uid of users) {
                 const m = guild.members.cache.get(uid);
                 if (!m) continue;
-                const role = m.roles.cache.find(r => r.name.startsWith(`${prof}`));
+                const role = m.roles.cache.find(r => r.name === prof);
                 const profText = role ? role.name : prof;
-                let toolText = '';
-                if (toolName && toolMap[uid]?.[toolName]) {
-                    const { tier, rarity } = toolMap[uid][toolName];
-                    toolText = ` – ${rarity} T${tier} ${toolName}`;
-                }
-                const line = `- <@${uid}> – ${profText}${toolText}\n`;
+                const line = `- <@${uid}> – ${profText}\n`;
                 if (buf.length + line.length > MAX) {
                     pushPage();
                     buf += header;
@@ -99,89 +97,4 @@ async function updateAssignmentEmbed(client, guild) {
     }
 }
 
-async function updateArmorEmbed(client, guild) {
-    if (DEV) {
-        log('[DEV] skipping armor embed');
-        return;
-    }
-
-    try {
-        const [armorMap, ringMap, heartMap] = await Promise.all([
-            fetchAllArmor(),
-            fetchAllRings(),
-            fetchAllHearts()
-        ]);
-        const channel = await client.channels.fetch(ARMOR_CHANNEL_ID);
-        let msg;
-        const stored = await getMeta('armor_message_id');
-        if (stored) {
-            try { msg = await channel.messages.fetch(stored); }
-            catch { }
-        }
-        if (!msg) {
-            const init = new EmbedBuilder()
-                .setTitle('🛡️ Armor Board')
-                .setDescription('*Initializing…*')
-                .setColor(0x00AEFF);
-            msg = await channel.send({ embeds: [init] });
-            await setMeta('armor_message_id', msg.id);
-        }
-
-        const allFields = [];
-        const userIds = new Set([
-            ...Object.keys(armorMap),
-            ...Object.keys(ringMap),
-            ...Object.keys(heartMap)
-        ]);
-        for (const uid of userIds) {
-            const userArmor = armorMap[uid] || {};
-            const cloth = Object.values(userArmor)
-                .filter(a => a.material === 'Cloth')
-                .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
-                .join('\n') || '*(none)*';
-
-            const leather = Object.values(userArmor)
-                .filter(a => a.material === 'Leather')
-                .map(a => `• ${a.piece}: ${a.rarity} T${a.tier}`)
-                .join('\n') || '*(none)*';
-
-            const ring = ringMap[uid] ? `T${ringMap[uid].tier}` : '*(none)*';
-            const heart = heartMap[uid] ? `T${heartMap[uid].tier}` : '*(none)*';
-
-            allFields.push(
-                { name: 'User', value: `<@${uid}>\nRing: ${ring}\nHeart: ${heart}`, inline: true },
-                { name: '🧵 Cloth', value: cloth, inline: true },
-                { name: '🥾 Leather', value: leather, inline: true }
-            );
-        }
-
-        const pages = [];
-        // Use groups of 24 fields (8 user rows) so a user's entry never spans pages
-        for (let i = 0; i < allFields.length; i += 24) {
-            const slice = allFields.slice(i, i + 24);
-            const embed = new EmbedBuilder()
-                .setTitle('🛡️ Armor Board')
-                .setDescription('*Cloth, Leather, Rings & Hearts*')
-                .setColor(0x00AEFF)
-                .setTimestamp()
-                .addFields(slice);
-            pages.push(embed);
-        }
-
-        if (pages.length === 0) {
-            pages.push(
-                new EmbedBuilder()
-                    .setTitle('🛡️ Armor Board')
-                    .setDescription('*No armor, rings or hearts set yet.*')
-                    .setColor(0x00AEFF)
-            );
-        }
-
-        await msg.edit({ embeds: pages });
-        log(`[Armor] board updated across ${pages.length} embed(s)`);
-    } catch (err) {
-        error('[Armor] update error', err);
-    }
-}
-
-module.exports = { updateAssignmentEmbed, updateArmorEmbed };
+module.exports = { updateAssignmentEmbed };
