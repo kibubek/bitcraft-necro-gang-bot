@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { Client, GatewayIntentBits, Partials, Events, EmbedBuilder } = require('discord.js');
 const { updateAssignmentEmbed } = require('./boards');
-const { db } = require('./db');
+const { professions } = require('./constants');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID;
@@ -57,19 +57,28 @@ client.on(Events.GuildMemberAdd, async member => {
 
 client.on(Events.GuildMemberRemove, async member => {
     log(`[Depart] Member left: ${member.user.tag}`);
-    const uid = member.id;
-    try {
-        const queries = [
-            'DELETE FROM assignments WHERE user_id=?'
-        ];
-        for (const q of queries) {
-            await new Promise((res, rej) => db.run(q, [uid], e => e ? rej(e) : res()));
-        }
-    } catch (err) {
-        error('[Depart] DB cleanup error', err);
-    }
     await updateAssignmentEmbed(client, member.guild);
     log('[Depart] Boards updated');
+});
+
+client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
+    try {
+        const before = new Set(oldMember.roles.cache.map(r => r.name));
+        const after = new Set(newMember.roles.cache.map(r => r.name));
+        let changed = false;
+        for (const prof of professions) {
+            if (before.has(prof) !== after.has(prof)) {
+                changed = true;
+                break;
+            }
+        }
+        if (changed) {
+            await updateAssignmentEmbed(client, newMember.guild);
+            log('[Update] Assignment roles changed');
+        }
+    } catch (err) {
+        error('[Update] member role update error', err);
+    }
 });
 
 client.on(Events.InteractionCreate, async interaction => {

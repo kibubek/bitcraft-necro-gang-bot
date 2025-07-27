@@ -1,6 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { professions } = require('../constants');
-const { fetchAllAssignments } = require('../db');
 const { log } = require('../logger');
 
 module.exports = {
@@ -19,10 +18,6 @@ module.exports = {
         const avatar = target.displayAvatarURL({ dynamic: true });
         const member = await interaction.guild.members.fetch(uid);
         const pros = professions.filter(p => member.roles.cache.some(r => r.name === p));
-
-        const assignMap = await fetchAllAssignments();
-
-        const pros = assignMap[uid] || [];
         const focusedText = pros.length ? pros.join(', ') : 'None';
 
         const embed = new EmbedBuilder()
