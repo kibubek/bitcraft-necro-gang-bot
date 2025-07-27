@@ -2,8 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { Client, GatewayIntentBits, Partials, Events, EmbedBuilder } = require('discord.js');
-const { updateAssignmentEmbed, updateArmorEmbed } = require('./boards');
-const { db } = require('./db');
+const { updateAssignmentEmbed } = require('./boards');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID;
@@ -24,11 +23,6 @@ for (const file of fs.readdirSync(path.join(__dirname, 'commands')).filter(f => 
 log(`[Init] Loaded ${commands.size} command modules`);
 const commandData = Array.from(commands.values()).map(c => c.data.toJSON());
 
-// Load interaction handlers
-const interactions = fs.readdirSync(path.join(__dirname, 'interactions'))
-    .filter(f => f.endsWith('.js'))
-    .map(f => require(`./interactions/${f}`));
-log(`[Init] Loaded ${interactions.length} interaction handlers`);
 
 client.once('ready', async () => {
     log(`✅ Logged in as ${client.user.tag}`);
@@ -37,7 +31,6 @@ client.once('ready', async () => {
         log(`[Init] Synced commands to ${guild.name}`);
         await guild.members.fetch();
         await updateAssignmentEmbed(client, guild);
-        await updateArmorEmbed(client, guild);
     }
 });
 
@@ -48,7 +41,7 @@ client.on(Events.GuildMemberAdd, async member => {
         if (channel) {
             const embed = new EmbedBuilder()
                 .setTitle('🎉 Welcome to Lich-core Dominion!')
-                .setDescription(`Hey ${member}, we’re glad you’re here!\n\nChoose your profession with \`/selectprofession\` and become part of the community.`)
+                .setDescription(`Hey ${member}, we’re glad you’re here!`)
                 .setColor(0x00AEFF)
                 .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
                 .setFooter({ text: `Member #${member.guild.memberCount} • ${new Date().toLocaleDateString()}` });
@@ -58,29 +51,12 @@ client.on(Events.GuildMemberAdd, async member => {
     } catch (err) {
         error('[Welcome] error', err);
     }
-    await updateArmorEmbed(client, member.guild);
-    log('[Welcome] Armor board synced');
+    log('[Welcome] Newcomer processed');
 });
 
 client.on(Events.GuildMemberRemove, async member => {
     log(`[Depart] Member left: ${member.user.tag}`);
-    const uid = member.id;
-    try {
-        const queries = [
-            'DELETE FROM assignments WHERE user_id=?',
-            'DELETE FROM tools WHERE user_id=?',
-            'DELETE FROM armor WHERE user_id=?',
-            'DELETE FROM rings WHERE user_id=?',
-            'DELETE FROM hearts WHERE user_id=?'
-        ];
-        for (const q of queries) {
-            await new Promise((res, rej) => db.run(q, [uid], e => e ? rej(e) : res()));
-        }
-    } catch (err) {
-        error('[Depart] DB cleanup error', err);
-    }
     await updateAssignmentEmbed(client, member.guild);
-    await updateArmorEmbed(client, member.guild);
     log('[Depart] Boards updated');
 });
 
@@ -91,14 +67,6 @@ client.on(Events.InteractionCreate, async interaction => {
             if (command) {
                 log(`[Cmd] ${interaction.user.tag} → /${interaction.commandName}`);
                 await command.execute(interaction);
-            }
-        } else {
-            for (const handler of interactions) {
-                if (handler.match(interaction)) {
-                    log(`[Select] ${interaction.user.tag} → ${interaction.customId}`);
-                    await handler.execute(interaction);
-                    break;
-                }
             }
         }
     } catch (err) {
