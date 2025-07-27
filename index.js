@@ -10,6 +10,23 @@ const WELCOME_CHANNEL_ID = process.env.WELCOME_CHANNEL_ID;
 
 const { log, error } = require('./logger');
 
+async function cleanupRoles(guild) {
+    await guild.roles.fetch();
+    for (const role of guild.roles.cache.values()) {
+        for (const prof of professions) {
+            if (new RegExp(`^${prof} \\d+$`).test(role.name)) {
+                try {
+                    await role.delete('Remove level-based profession role');
+                    log(`[Startup] Deleted role ${role.name} in ${guild.name}`);
+                } catch (err) {
+                    error('[Startup] Failed to delete role', err);
+                }
+                break;
+            }
+        }
+    }
+}
+
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
     partials: [Partials.GuildMember]
@@ -31,6 +48,7 @@ client.once('ready', async () => {
         await guild.commands.set(commandData);
         log(`[Init] Synced commands to ${guild.name}`);
         await guild.members.fetch();
+        await cleanupRoles(guild);
         await updateAssignmentEmbed(client, guild);
     }
 });
